@@ -115,7 +115,7 @@ button:
     on_press:
       - lambda: |-
           using namespace esphome::waveshare_audio;
-          auto option = id(buzz_pattern).state;
+          auto option = id(buzz_pattern).current_option();
           if (option == "Double Beep") {
             id(ws_audio).play_buzz(BUZZ_DOUBLE_BEEP);
           } else if (option == "Alarm") {
