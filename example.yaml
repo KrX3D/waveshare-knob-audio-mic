@@ -1,13 +1,13 @@
 esphome:
-  name: smartknob
-  
+  name: smartknob_audio_mic
+
 external_components:
   - source:
       type: git
-      url: https://github.com/KrX3D/waveshare-knob-audio-mic
+      url: https://github.com/KrX3D/waveshare-knob-audio-mic.git
       ref: main
+    components: [waveshare_audio, waveshare_mic]
     refresh: 0s
-    components: [audio_mic]
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -20,8 +20,118 @@ esp32:
       CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
       CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
       CONFIG_SPIRAM_RODATA: y
-      # Enable long file names for SD card
       CONFIG_FATFS_LFN_STACK: "y"
 
 logger:
   level: DEBUG
+
+# Keep your existing bus
+i2c:
+  sda: 11
+  scl: 12
+  id: ic_bus
+
+# NOTE: UART on GPIO39/40 conflicts with Arduino I2S audio pins.
+# If you must keep this UART, move audio pins to the alt routing used in user_config.h comments:
+#   bclk_pin: 48
+#   ws_pin: 38
+#   dout_pin: 47
+uart:
+  id: audio_uart
+  tx_pin: GPIO40
+  rx_pin: GPIO39
+  baud_rate: 115200
+  rx_buffer_size: 1024
+
+# Your existing sd_mmc component can mount /sdcard.
+
+waveshare_mic:
+  id: ws_mic
+  pdm_clock_pin: 45
+  pdm_data_pin: 46
+  sample_rate: 44100
+  path: /sdcard/recording.wav
+  buffer_bytes: 4096
+
+waveshare_audio:
+  id: ws_audio
+  # Arduino mapping:
+  # bclk_pin: 39
+  # ws_pin: 40
+  # dout_pin: 41
+  # With UART on 39/40 use this alternate set from your user_config.h comments:
+  bclk_pin: 48
+  ws_pin: 38
+  dout_pin: 47
+  enable_pin: 0
+  sample_rate: 44100
+  default_file: /sdcard/recording.wav
+  gain: 0.25
+
+globals:
+  - id: selected_file
+    type: std::string
+    restore_value: no
+    initial_value: '"/sdcard/recording.wav"'
+
+select:
+  - platform: template
+    name: "Audio Buzz Pattern"
+    id: buzz_pattern
+    optimistic: true
+    options:
+      - "Sine"
+      - "Double Beep"
+      - "Alarm"
+    initial_option: "Sine"
+
+button:
+  - platform: template
+    name: "Mic Start Recording"
+    on_press:
+      - lambda: |-
+          id(ws_mic).start_recording(id(selected_file));
+
+  - platform: template
+    name: "Mic Stop Recording"
+    on_press:
+      - lambda: |-
+          id(ws_mic).stop_recording();
+
+  - platform: template
+    name: "Audio Play File"
+    on_press:
+      - lambda: |-
+          id(ws_audio).play_file(id(selected_file));
+
+  - platform: template
+    name: "Audio Stop"
+    on_press:
+      - lambda: |-
+          id(ws_audio).stop();
+
+  - platform: template
+    name: "Audio Play Buzz"
+    on_press:
+      - lambda: |-
+          using namespace esphome::waveshare_audio;
+          auto option = id(buzz_pattern).current_option();
+          if (option == "Double Beep") {
+            id(ws_audio).play_buzz(BUZZ_DOUBLE_BEEP);
+          } else if (option == "Alarm") {
+            id(ws_audio).play_buzz(BUZZ_ALARM);
+          } else {
+            id(ws_audio).play_buzz(BUZZ_SINE);
+          }
+
+number:
+  - platform: template
+    name: "Audio Gain"
+    optimistic: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.05
+    initial_value: 0.25
+    set_action:
+      - lambda: |-
+          id(ws_audio).set_gain(x);
