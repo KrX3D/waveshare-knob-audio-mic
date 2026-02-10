@@ -33,8 +33,8 @@ class WaveshareMic : public Component {
   bool write_wav_header_placeholder_();
   void finalize_wav_header_();
 
-  int pdm_clock_pin_{42};
-  int pdm_data_pin_{2};
+  int pdm_clock_pin_{45};
+  int pdm_data_pin_{46};
   uint32_t sample_rate_{44100};
   std::string default_path_{"/sdcard/recording.wav"};
   size_t buffer_bytes_{4096};

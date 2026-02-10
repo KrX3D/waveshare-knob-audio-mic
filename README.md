@@ -1,6 +1,6 @@
 # Waveshare Knob Audio + Mic ESPHome Components
 
-This repository now provides **two ESPHome external components** for ESP32-S3 audio on the Waveshare Smart Knob style board:
+This repository provides two ESPHome external components for ESP32-S3 audio on Waveshare Smart Knob style boards:
 
 - `waveshare_mic` (PDM microphone -> WAV file on SD)
 - `waveshare_audio` (WAV/buzz playback -> I2S DAC / AUX output)
@@ -19,13 +19,15 @@ Features:
   - `is_recording()`
   - `recording_ms()`
 
-Example config:
+Default pins now match your Arduino project:
+- `pdm_clock_pin: 45`
+- `pdm_data_pin: 46`
 
 ```yaml
 waveshare_mic:
   id: ws_mic
-  pdm_clock_pin: 42
-  pdm_data_pin: 2
+  pdm_clock_pin: 45
+  pdm_data_pin: 46
   sample_rate: 44100
   path: /sdcard/recording.wav
   buffer_bytes: 4096
@@ -46,15 +48,20 @@ Features:
   - `play_buzz(pattern)`
   - `stop()`
   - `set_gain(value)`
+- PCM5100 control pin support (`enable_pin`, defaults to `GPIO0`, set HIGH in setup)
 
-Example config:
+Default pins now match your Arduino project:
+- `bclk_pin: 39`
+- `ws_pin: 40`
+- `dout_pin: 41`
 
 ```yaml
 waveshare_audio:
   id: ws_audio
-  bclk_pin: 41
+  bclk_pin: 39
   ws_pin: 40
-  dout_pin: 39
+  dout_pin: 41
+  enable_pin: 0
   sample_rate: 44100
   default_file: /sdcard/recording.wav
   gain: 0.25
@@ -62,10 +69,26 @@ waveshare_audio:
 
 ## Full example
 
-See `example.yaml` for start/stop buttons, buzz selection, and gain control.
+See `example.yaml` for:
+- record start/stop buttons,
+- playback button,
+- buzz selection,
+- gain control,
+- UART + I2C declarations.
 
-## Notes
+## Important notes
 
-- Use your existing SD component to mount `/sdcard` first (for example your `waveshare-knob-sdmmc` component).
-- Current implementation is raw WAV read/write and simple buzz generation.
-- A true Home Assistant `media_player` entity can be added later as a next step.
+1. **UART pin conflict with audio**
+   - If you use:
+     - `uart tx: GPIO40`
+     - `uart rx: GPIO39`
+   - then those pins cannot simultaneously be used for I2S BCLK/WS.
+   - In that case use the alternate audio pins shown in your Arduino comments: `BCLK=48, WS=38, DOUT=47`.
+
+2. **Built-in ESPHome i2s microphone error (`adc_type not specified`)**
+   - That error is for ESPHome's built-in `microphone: platform: i2s_audio`.
+   - Use `adc_type: pdm` when using a PDM microphone.
+   - This repository's custom `waveshare_mic` component does not use that option.
+
+3. **SD card path**
+   - Mount SD first (for example with your `waveshare-knob-sdmmc` component), then use paths like `/sdcard/recording.wav`.

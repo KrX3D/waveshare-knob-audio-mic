@@ -23,6 +23,7 @@ class WaveshareAudio : public Component {
   void set_bclk_pin(int pin) { this->bclk_pin_ = pin; }
   void set_ws_pin(int pin) { this->ws_pin_ = pin; }
   void set_dout_pin(int pin) { this->dout_pin_ = pin; }
+  void set_enable_pin(int pin) { this->enable_pin_ = pin; }
   void set_sample_rate(uint32_t sample_rate) { this->sample_rate_ = sample_rate; }
   void set_default_file(const std::string &path) { this->default_file_ = path; }
   void set_gain(float gain) { this->gain_ = gain; }
@@ -36,9 +37,10 @@ class WaveshareAudio : public Component {
   bool write_pcm_(const int16_t *pcm, size_t bytes);
   bool play_sine_(float freq_hz, uint32_t duration_ms);
 
-  int bclk_pin_{41};
+  int bclk_pin_{39};
   int ws_pin_{40};
-  int dout_pin_{39};
+  int dout_pin_{41};
+  int enable_pin_{0};
   uint32_t sample_rate_{44100};
   std::string default_file_{"/sdcard/recording.wav"};
   float gain_{0.25f};

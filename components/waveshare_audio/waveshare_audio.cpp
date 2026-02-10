@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include "driver/gpio.h"
 
 namespace esphome {
 namespace waveshare_audio {
@@ -12,6 +13,16 @@ namespace waveshare_audio {
 static const char *const TAG = "waveshare_audio";
 
 void WaveshareAudio::setup() {
+  // On Waveshare board GPIO0 hands PCM5100A control to ESP32-S3 when set HIGH.
+  gpio_config_t gpio_conf = {};
+  gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  gpio_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+  gpio_conf.intr_type = GPIO_INTR_DISABLE;
+  gpio_conf.pin_bit_mask = (1ULL << static_cast<uint32_t>(this->enable_pin_));
+  gpio_conf.mode = GPIO_MODE_OUTPUT;
+  gpio_config(&gpio_conf);
+  gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 1);
+
   if (!this->init_i2s_()) {
     this->mark_failed();
     return;
