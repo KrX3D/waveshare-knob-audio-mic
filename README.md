@@ -150,9 +150,9 @@ waveshare_mic:
 
 waveshare_audio:
   id: ws_audio
-  bclk_pin: 48
-  ws_pin: 38
-  dout_pin: 47
+  bclk_pin: 39
+  ws_pin: 40
+  dout_pin: 41
   enable_pin: 0
   sample_rate: 44100
   default_file: /sdcard/recording.wav
@@ -288,3 +288,40 @@ rm -rf /data/external_components
 ```
 
    - If still stuck, restart the ESPHome add-on/container and run `esphome clean <your_yaml>.yaml` before compile.
+
+
+5. **No beeps / no AUX output**
+   - Compare against Arduino mapping (from `user_config.h`):
+     - I2S DAC: `BCLK=39`, `WS=40`, `DOUT=41`
+     - PDM mic: `CLK=45`, `DATA=46`
+   - If UART on GPIO39/40 is enabled, audio clock pins conflict; either disable UART or move I2S to alternate pins (`48/38/47`) if your board revision actually routes them.
+   - Your current custom component sets PCM5100 enable pin HIGH on `enable_pin` (default `GPIO0`), matching Arduino behavior.
+   - For first audible test, set gain higher (for example `gain: 0.8`).
+
+## Home Assistant media_player (full add-on YAML block)
+
+If you want a true HA `media_player` entity, use ESPHome built-in `speaker` + `media_player` on the same DAC pins (do not use `waveshare_audio` at the same time):
+
+```yaml
+# Use either this built-in media_player path OR waveshare_audio, not both simultaneously
+
+i2s_audio:
+  - id: i2s_for_speaker
+    i2s_bclk_pin: GPIO39
+    i2s_lrclk_pin: GPIO40
+
+speaker:
+  - platform: i2s_audio
+    id: ext_speaker
+    i2s_audio_id: i2s_for_speaker
+    i2s_dout_pin: GPIO41
+    dac_type: external
+    sample_rate: 44100
+    channel: mono
+
+media_player:
+  - platform: speaker
+    name: SmartKnob Speaker
+    id: smartknob_media_player
+    speaker: ext_speaker
+```

@@ -59,10 +59,10 @@ waveshare_audio:
   # bclk_pin: 39
   # ws_pin: 40
   # dout_pin: 41
-  # With UART on 39/40 use this alternate set from your user_config.h comments:
-  bclk_pin: 48
-  ws_pin: 38
-  dout_pin: 47
+  # Arduino default mapping (use this when UART on 39/40 is disabled):
+  bclk_pin: 39
+  ws_pin: 40
+  dout_pin: 41
   enable_pin: 0
   sample_rate: 44100
   default_file: /sdcard/recording.wav
