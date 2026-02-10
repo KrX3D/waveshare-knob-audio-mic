@@ -11,7 +11,19 @@ Use external components like this:
 
 ```yaml
 external_components:
-  - source: github://KrX3D/waveshare-knob-audio-mic
+  - source:
+      type: git
+      url: https://github.com/KrX3D/waveshare-knob-audio-mic.git
+      ref: main
+    components: [waveshare_audio, waveshare_mic]
+    refresh: 0s
+```
+
+If you prefer shorthand, this also works on many ESPHome versions:
+
+```yaml
+external_components:
+  - source: github://KrX3D/waveshare-knob-audio-mic@main
     components: [waveshare_audio, waveshare_mic]
     refresh: 0s
 ```
@@ -95,7 +107,10 @@ esphome:
   name: smartknob_audio_mic
 
 external_components:
-  - source: github://KrX3D/waveshare-knob-audio-mic
+  - source:
+      type: git
+      url: https://github.com/KrX3D/waveshare-knob-audio-mic.git
+      ref: main
     components: [waveshare_audio, waveshare_mic]
     refresh: 0s
 
@@ -261,3 +276,15 @@ media_player:
 
 3. **SD card path**
    - Mount SD first (for example with your `waveshare-knob-sdmmc` component), then use paths like `/sdcard/recording.wav`.
+
+
+4. **`@None` external component / broken cache folder**
+   - If logs show `...waveshare-knob-audio-mic.git@None`, your source ref was not resolved.
+   - Fix by setting explicit `ref: main` (or use `github://...@main`).
+   - Then clear corrupted external component cache and rerun:
+
+```bash
+rm -rf /data/external_components
+```
+
+   - If still stuck, restart the ESPHome add-on/container and run `esphome clean <your_yaml>.yaml` before compile.
