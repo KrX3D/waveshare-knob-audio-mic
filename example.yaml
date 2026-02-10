@@ -1,13 +1,13 @@
 esphome:
-  name: smartknob
-  
+  name: smartknob_audio_mic
+
 external_components:
   - source:
       type: git
       url: https://github.com/KrX3D/waveshare-knob-audio-mic
       ref: main
     refresh: 0s
-    components: [audio_mic]
+    components: [waveshare_mic, waveshare_audio]
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -20,8 +20,95 @@ esp32:
       CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
       CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
       CONFIG_SPIRAM_RODATA: y
-      # Enable long file names for SD card
       CONFIG_FATFS_LFN_STACK: "y"
 
 logger:
   level: DEBUG
+
+# Your existing sd_mmc component can mount /sdcard.
+# Example uses it for both recording and playback file paths.
+
+waveshare_mic:
+  id: ws_mic
+  pdm_clock_pin: 42
+  pdm_data_pin: 2
+  sample_rate: 44100
+  path: /sdcard/recording.wav
+  buffer_bytes: 4096
+
+waveshare_audio:
+  id: ws_audio
+  bclk_pin: 41
+  ws_pin: 40
+  dout_pin: 39
+  sample_rate: 44100
+  default_file: /sdcard/recording.wav
+  gain: 0.25
+
+globals:
+  - id: selected_file
+    type: std::string
+    restore_value: no
+    initial_value: '"/sdcard/recording.wav"'
+
+select:
+  - platform: template
+    name: "Audio Buzz Pattern"
+    id: buzz_pattern
+    optimistic: true
+    options:
+      - "Sine"
+      - "Double Beep"
+      - "Alarm"
+    initial_option: "Sine"
+
+button:
+  - platform: template
+    name: "Mic Start Recording"
+    on_press:
+      - lambda: |-
+          id(ws_mic).start_recording(id(selected_file));
+
+  - platform: template
+    name: "Mic Stop Recording"
+    on_press:
+      - lambda: |-
+          id(ws_mic).stop_recording();
+
+  - platform: template
+    name: "Audio Play File"
+    on_press:
+      - lambda: |-
+          id(ws_audio).play_file(id(selected_file));
+
+  - platform: template
+    name: "Audio Stop"
+    on_press:
+      - lambda: |-
+          id(ws_audio).stop();
+
+  - platform: template
+    name: "Audio Play Buzz"
+    on_press:
+      - lambda: |-
+          using namespace esphome::waveshare_audio;
+          auto option = id(buzz_pattern).state;
+          if (option == "Double Beep") {
+            id(ws_audio).play_buzz(BUZZ_DOUBLE_BEEP);
+          } else if (option == "Alarm") {
+            id(ws_audio).play_buzz(BUZZ_ALARM);
+          } else {
+            id(ws_audio).play_buzz(BUZZ_SINE);
+          }
+
+number:
+  - platform: template
+    name: "Audio Gain"
+    optimistic: true
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.05
+    initial_value: 0.25
+    set_action:
+      - lambda: |-
+          id(ws_audio).set_gain(x);
