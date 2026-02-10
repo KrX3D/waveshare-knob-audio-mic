@@ -2,12 +2,9 @@ esphome:
   name: smartknob_audio_mic
 
 external_components:
-  - source:
-      type: git
-      url: https://github.com/KrX3D/waveshare-knob-audio-mic
-      ref: main
+  - source: github://KrX3D/waveshare-knob-audio-mic
+    components: [waveshare_audio, waveshare_mic]
     refresh: 0s
-    components: [waveshare_mic, waveshare_audio]
 
 esp32:
   board: esp32-s3-devkitc-1
