@@ -1,0 +1,73 @@
+esphome:
+  name: smartknob_builtin_audio_va
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+api:
+ota:
+
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
+
+# Optional. Keep disabled if it conflicts with your audio pins.
+# uart:
+#   id: audio_uart
+#   tx_pin: GPIO40
+#   rx_pin: GPIO39
+#   baud_rate: 115200
+
+# IMPORTANT:
+# - Put microphone bus first so ESPHome allocates I2S0 first (PDM RX on S3 works best there).
+# - ESPHome still requires i2s_lrclk_pin in schema for mic bus; use a free dummy pin.
+i2s_audio:
+  - id: i2s_mic
+    i2s_bclk_pin: GPIO45
+    i2s_lrclk_pin: GPIO37  # dummy/free pin, PDM path does not use LRCLK
+
+  - id: i2s_out
+    i2s_bclk_pin: GPIO39
+    i2s_lrclk_pin: GPIO40
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_mic
+    adc_type: external
+    i2s_din_pin: GPIO46
+    pdm: true
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+speaker:
+  - platform: i2s_audio
+    id: spk
+    i2s_audio_id: i2s_out
+    dac_type: external
+    i2s_dout_pin: GPIO41
+    channel: mono
+
+media_player:
+  - platform: speaker
+    id: player
+    name: ESP32 Speaker
+    announcement_pipeline:
+      speaker: spk
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+
+# Voice Assistant path to test mic + speaker in Home Assistant.
+# Requires Assist pipeline configured in HA.
+voice_assistant:
+  microphone: mic
+  media_player: player
