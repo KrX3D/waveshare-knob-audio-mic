@@ -84,9 +84,21 @@ bool WaveshareAudio::write_pcm_(const int16_t *pcm, size_t bytes) {
     scaled[i] = static_cast<int16_t>(pcm[i] * this->gain_);
   }
 
-  size_t bytes_written = 0;
-  esp_err_t err = i2s_channel_write(this->tx_chan_, scaled.data(), bytes, &bytes_written, pdMS_TO_TICKS(50));
-  return err == ESP_OK && bytes_written == bytes;
+  size_t total_written = 0;
+  while (total_written < bytes && !this->stop_requested_) {
+    size_t just_written = 0;
+    auto *ptr = reinterpret_cast<const uint8_t *>(scaled.data()) + total_written;
+    esp_err_t err = i2s_channel_write(this->tx_chan_, ptr, bytes - total_written, &just_written, pdMS_TO_TICKS(100));
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "i2s write failed (%s)", esp_err_to_name(err));
+      return false;
+    }
+    if (just_written == 0)
+      continue;
+    total_written += just_written;
+  }
+
+  return total_written == bytes && !this->stop_requested_;
 }
 
 void WaveshareAudio::write_silence_(uint32_t duration_ms) {
@@ -108,7 +120,10 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
     return false;
   }
 
+  fseek(fp, 0, SEEK_END);
+  long file_size = ftell(fp);
   fseek(fp, 44, SEEK_SET);
+  ESP_LOGI(TAG, "Playing file %s (%ld bytes)", path.c_str(), file_size);
   std::vector<int16_t> block(1024);
 
   bool ok = true;
@@ -122,6 +137,9 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
     }
   }
   fclose(fp);
+
+  if (!ok)
+    ESP_LOGW(TAG, "Playback failed before EOF for %s", path.c_str());
 
   return ok && !this->stop_requested_;
 }

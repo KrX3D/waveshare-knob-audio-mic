@@ -158,10 +158,15 @@ void WaveshareMic::stop_recording() {
   if (!this->recording_)
     return;
 
+  this->last_recording_ms_ = millis() - this->start_ms_;
   this->recording_ = false;
   this->finalize_wav_header_();
   this->close_file_();
-  ESP_LOGI(TAG, "Stopped recording (%u ms, %u bytes)", this->recording_ms(), this->bytes_written_);
+  if (this->bytes_written_ == 0) {
+    ESP_LOGW(TAG, "Stopped recording (%u ms) but captured 0 bytes", this->last_recording_ms_);
+  } else {
+    ESP_LOGI(TAG, "Stopped recording (%u ms, %u bytes)", this->last_recording_ms_, this->bytes_written_);
+  }
 }
 
 uint32_t WaveshareMic::recording_ms() const {

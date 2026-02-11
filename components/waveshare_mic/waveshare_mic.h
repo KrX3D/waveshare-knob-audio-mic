@@ -43,6 +43,7 @@ class WaveshareMic : public Component {
   bool recording_{false};
   uint32_t start_ms_{0};
   uint32_t bytes_written_{0};
+  uint32_t last_recording_ms_{0};
 
   i2s_chan_handle_t rx_chan_{nullptr};
   FILE *record_file_{nullptr};
