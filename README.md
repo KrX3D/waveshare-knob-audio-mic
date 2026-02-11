@@ -325,3 +325,38 @@ media_player:
     id: smartknob_media_player
     speaker: ext_speaker
 ```
+
+
+## Built-in ESPHome path (recommended for Voice Assistant testing)
+
+If you want to validate hardware quickly without these custom components, use ESPHome built-ins (`i2s_audio` + `microphone` + `speaker` + `media_player` + `voice_assistant`).
+
+A full reference config is included in this repo:
+- `example_builtin_voice_assistant.yaml`
+
+Why this often works better first:
+- easier integration with Home Assistant Assist,
+- known-good `media_player` entity behavior,
+- simpler troubleshooting surface.
+
+### About your current config
+
+Your built-in pin layout is consistent with the Arduino mapping for active audio path:
+- mic PDM: `CLK=45`, `DATA=46`
+- speaker I2S: `BCLK=39`, `WS=40`, `DOUT=41`
+
+And yes, for current ESPHome schemas you still need an `i2s_lrclk_pin` even on the PDM mic bus; using a free dummy pin is expected.
+
+### Why you may hear buzzing on TTS
+
+Common causes:
+1. **Sample-rate mismatch / resampling artifacts** (TTS stream vs I2S pipeline).
+2. **Pin conflict/noise coupling** (UART/I2C/other peripherals sharing nearby lines).
+3. **Power/ground noise** on the DAC/amp path.
+4. **Very low gain in custom path** (if using custom component, raise gain for audibility tests).
+
+Quick checks:
+- keep speaker/media pipeline at `16 kHz`, mono, WAV while testing,
+- temporarily disable UART and any non-essential peripherals,
+- verify `enable_pin` behavior if using `waveshare_audio` custom component,
+- test with a short known-good WAV first, then TTS.
