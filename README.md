@@ -398,3 +398,30 @@ Quick checks:
    - In `waveshare_audio`, `enable_pin` defaults to `0` and is driven HIGH in `setup()`.
    - You can write either `enable_pin: 0` or `enable_pin: GPIO0` in YAML now.
    - GPIO0 is a strapping pin: avoid forcing it LOW during boot. Driving it HIGH after boot is fine.
+
+
+## Can these custom components work with Voice Assistant / media_player?
+
+Short answer:
+- **Directly as-is:** not as native ESPHome `voice_assistant` endpoints, because `waveshare_mic`/`waveshare_audio` are custom `Component` classes (button/action style), not ESPHome `microphone` / `speaker` platform entities.
+- **Yes, practical way:** run a **hybrid** setup where:
+  - your custom components handle SD recording/playback/buzz,
+  - built-in ESPHome `microphone` + `speaker` + `media_player` + `voice_assistant` handle Assist/media integration.
+
+### Hybrid notes
+
+1. Do **not** drive the same DAC from both custom audio and built-in speaker at the same time.
+2. Use one mode at a time (for example, a dedicated firmware profile for Assist/media_player and another for custom SD recorder/player), or make sure only one path touches I2S output pins in a given firmware.
+3. Keep GPIO0 route-enable HIGH on boot for built-in speaker/media mode.
+
+### Minimal Assist/media profile (recommended)
+
+Use `example_builtin_voice_assistant.yaml` as the baseline if your priority is Home Assistant Assist + media_player.
+
+### Minimal custom SD profile (recommended)
+
+Use `example.yaml` if your priority is SD recording/playback/buzz with custom controls.
+
+### Why this split is currently needed
+
+`voice_assistant` in ESPHome expects a `microphone` entity and playback path through `speaker`/`media_player`. The custom components expose methods (`start_recording`, `play_file`, `play_buzz`, `stop`) and do not currently register those native platform entity types.
