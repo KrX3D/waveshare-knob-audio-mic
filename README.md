@@ -251,6 +251,17 @@ speaker:
     sample_rate: 44100
     channel: mono
 
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
+
+esphome:
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
+
 media_player:
   - platform: speaker
     name: SmartKnob Speaker
@@ -319,6 +330,17 @@ speaker:
     sample_rate: 44100
     channel: mono
 
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
+
+esphome:
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
+
 media_player:
   - platform: speaker
     name: SmartKnob Speaker
@@ -369,3 +391,10 @@ Quick checks:
    - Verify mic pins are exactly `CLK=45`, `DATA=46`, and that mic bus is initialized before audio output bus.
    - Check logs for periodic `Recording ... <bytes>` lines while recording.
    - If your SD component mounts root (`/`) instead of `/sdcard`, use `/recording.wav` path in YAML.
+
+
+7. **GPIO0 for DAC switch / enable**
+   - Yes, this board uses GPIO0 to hand audio path control to the ESP32-S3 (as in the Arduino code).
+   - In `waveshare_audio`, `enable_pin` defaults to `0` and is driven HIGH in `setup()`.
+   - You can write either `enable_pin: 0` or `enable_pin: GPIO0` in YAML now.
+   - GPIO0 is a strapping pin: avoid forcing it LOW during boot. Driving it HIGH after boot is fine.

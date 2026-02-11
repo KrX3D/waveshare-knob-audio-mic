@@ -13,11 +13,20 @@ CONF_BUFFER_BYTES = "buffer_bytes"
 waveshare_mic_ns = cg.esphome_ns.namespace("waveshare_mic")
 WaveshareMic = waveshare_mic_ns.class_("WaveshareMic", cg.Component)
 
+
+def validate_gpio_num(value):
+    if isinstance(value, str):
+        upper = value.strip().upper()
+        if upper.startswith("GPIO"):
+            value = upper[4:]
+    value = cv.int_(value)
+    return cv.int_range(min=0, max=48)(value)
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareMic),
-        cv.Required(CONF_PDM_CLOCK_PIN): cv.int_range(min=0, max=48),
-        cv.Required(CONF_PDM_DATA_PIN): cv.int_range(min=0, max=48),
+        cv.Required(CONF_PDM_CLOCK_PIN): validate_gpio_num,
+        cv.Required(CONF_PDM_DATA_PIN): validate_gpio_num,
         cv.Optional(CONF_SAMPLE_RATE, default=44100): cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_PATH, default="/sdcard/recording.wav"): cv.string,
         cv.Optional(CONF_BUFFER_BYTES, default=4096): cv.int_range(min=1024, max=16384),

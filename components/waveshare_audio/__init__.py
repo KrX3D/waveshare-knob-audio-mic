@@ -14,16 +14,25 @@ CONF_ENABLE_PIN = "enable_pin"
 waveshare_audio_ns = cg.esphome_ns.namespace("waveshare_audio")
 WaveshareAudio = waveshare_audio_ns.class_("WaveshareAudio", cg.Component)
 
+
+def validate_gpio_num(value):
+    if isinstance(value, str):
+        upper = value.strip().upper()
+        if upper.startswith("GPIO"):
+            value = upper[4:]
+    value = cv.int_(value)
+    return cv.int_range(min=0, max=48)(value)
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareAudio),
-        cv.Required(CONF_BCLK_PIN): cv.int_range(min=0, max=48),
-        cv.Required(CONF_WS_PIN): cv.int_range(min=0, max=48),
-        cv.Required(CONF_DOUT_PIN): cv.int_range(min=0, max=48),
+        cv.Required(CONF_BCLK_PIN): validate_gpio_num,
+        cv.Required(CONF_WS_PIN): validate_gpio_num,
+        cv.Required(CONF_DOUT_PIN): validate_gpio_num,
         cv.Optional(CONF_SAMPLE_RATE, default=44100): cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_DEFAULT_FILE, default="/sdcard/recording.wav"): cv.string,
         cv.Optional(CONF_GAIN, default=0.25): cv.float_range(min=0.0, max=1.0),
-        cv.Optional(CONF_ENABLE_PIN, default=0): cv.int_range(min=0, max=48),
+        cv.Optional(CONF_ENABLE_PIN, default=0): validate_gpio_num,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 

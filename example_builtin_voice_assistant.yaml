@@ -1,5 +1,9 @@
 esphome:
   name: smartknob_builtin_audio_va
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -9,6 +13,11 @@ esp32:
 logger:
 api:
 ota:
+
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
 
 # Optional. Keep disabled if it conflicts with your audio pins.
 # uart:
