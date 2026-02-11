@@ -425,3 +425,24 @@ Use `example.yaml` if your priority is SD recording/playback/buzz with custom co
 ### Why this split is currently needed
 
 `voice_assistant` in ESPHome expects a `microphone` entity and playback path through `speaker`/`media_player`. The custom components expose methods (`start_recording`, `play_file`, `play_buzz`, `stop`) and do not currently register those native platform entity types.
+
+
+## Built-in ESPHome vs custom components (what differs?)
+
+- Built-in (`i2s_audio` + `microphone` + `speaker` + `media_player` + `voice_assistant`):
+  - Native Home Assistant `media_player` and Assist integration.
+  - Better for Voice Assistant use-cases.
+- Custom (`waveshare_mic` + `waveshare_audio`):
+  - SD recording/playback helpers and buzz APIs.
+  - Not native ESPHome `microphone` / `speaker` entities.
+
+If your priority is **Voice + media_player** together, prefer the built-in path (`example_builtin_voice_assistant.yaml`).
+
+### Voice + media_player checklist (built-in path)
+
+1. Keep mic bus first in `i2s_audio` list (PDM on S3).
+2. Keep `sample_rate: 16000`, `bits_per_sample: 16bit` for initial stability.
+3. Keep GPIO0 route-enable HIGH on boot.
+4. Add explicit VA start/stop buttons if wake-word is not configured.
+
+The updated `example_builtin_voice_assistant.yaml` includes these controls.

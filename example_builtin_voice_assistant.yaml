@@ -69,5 +69,20 @@ media_player:
 # Voice Assistant path to test mic + speaker in Home Assistant.
 # Requires Assist pipeline configured in HA.
 voice_assistant:
+  id: va
   microphone: mic
   media_player: player
+
+
+# Optional controls to verify VA pipeline from HA without wake-word setup.
+button:
+  - platform: template
+    name: "VA Start Continuous"
+    on_press:
+      - voice_assistant.start_continuous: va
+
+  - platform: template
+    name: "VA Stop"
+    on_press:
+      - voice_assistant.stop: va
+
