@@ -31,11 +31,17 @@ class WaveshareAudio : public Component {
   bool play_file(const std::string &path = "");
   bool play_buzz(BuzzPattern pattern);
   void stop();
+  bool is_playing() const { return this->playback_task_ != nullptr; }
 
  protected:
   bool init_i2s_();
   bool write_pcm_(const int16_t *pcm, size_t bytes);
   bool play_sine_(float freq_hz, uint32_t duration_ms);
+  bool play_file_blocking_(const std::string &path);
+  bool play_buzz_blocking_(BuzzPattern pattern);
+  void write_silence_(uint32_t duration_ms);
+
+  static void playback_task_trampoline_(void *arg);
 
   int bclk_pin_{39};
   int ws_pin_{40};
@@ -47,6 +53,12 @@ class WaveshareAudio : public Component {
 
   i2s_chan_handle_t tx_chan_{nullptr};
   bool ready_{false};
+  volatile bool stop_requested_{false};
+  TaskHandle_t playback_task_{nullptr};
+
+  enum PlaybackMode : uint8_t { PLAYBACK_NONE = 0, PLAYBACK_FILE = 1, PLAYBACK_BUZZ = 2 } playback_mode_{PLAYBACK_NONE};
+  std::string pending_file_{};
+  BuzzPattern pending_buzz_{BUZZ_SINE};
 };
 
 }  // namespace waveshare_audio

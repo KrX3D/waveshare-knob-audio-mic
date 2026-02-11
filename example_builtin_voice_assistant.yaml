@@ -23,7 +23,7 @@ ota:
 i2s_audio:
   - id: i2s_mic
     i2s_bclk_pin: GPIO45
-    i2s_lrclk_pin: GPIO48  # dummy/free pin, PDM path does not use LRCLK
+    i2s_lrclk_pin: GPIO37  # dummy/free pin, PDM path does not use LRCLK
 
   - id: i2s_out
     i2s_bclk_pin: GPIO39
