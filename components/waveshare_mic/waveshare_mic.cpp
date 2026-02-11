@@ -29,14 +29,23 @@ void WaveshareMic::loop() {
     return;
 
   size_t bytes_read = 0;
-  esp_err_t err = i2s_channel_read(this->rx_chan_, this->buffer_, this->buffer_bytes_, &bytes_read, 0);
+  esp_err_t err = i2s_channel_read(this->rx_chan_, this->buffer_, this->buffer_bytes_, &bytes_read, pdMS_TO_TICKS(20));
   if (err == ESP_OK && bytes_read > 0) {
     size_t written = fwrite(this->buffer_, 1, bytes_read, this->record_file_);
     this->bytes_written_ += written;
     if (written != bytes_read) {
       ESP_LOGE(TAG, "Short write to %s; stopping recording", this->default_path_.c_str());
       this->stop_recording();
+      return;
     }
+  } else if (err != ESP_ERR_TIMEOUT) {
+    ESP_LOGW(TAG, "i2s_channel_read failed: %s", esp_err_to_name(err));
+  }
+
+  uint32_t now = millis();
+  if (now - this->last_stats_log_ms_ > 5000) {
+    this->last_stats_log_ms_ = now;
+    ESP_LOGI(TAG, "Recording %s: %u ms, %u bytes", this->default_path_.c_str(), now - this->start_ms_, this->bytes_written_);
   }
 }
 
@@ -148,9 +157,10 @@ bool WaveshareMic::start_recording(const std::string &path) {
   this->default_path_ = final_path;
   this->bytes_written_ = 0;
   this->start_ms_ = millis();
+  this->last_stats_log_ms_ = this->start_ms_;
   this->recording_ = true;
 
-  ESP_LOGI(TAG, "Started recording to %s", final_path.c_str());
+  ESP_LOGI(TAG, "Started recording to %s (sample_rate=%u)", final_path.c_str(), this->sample_rate_);
   return true;
 }
 

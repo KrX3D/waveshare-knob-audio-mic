@@ -360,3 +360,12 @@ Quick checks:
 - temporarily disable UART and any non-essential peripherals,
 - verify `enable_pin` behavior if using `waveshare_audio` custom component,
 - test with a short known-good WAV first, then TTS.
+
+
+
+6. **`recording.wav` is only 44 bytes**
+   - 44 bytes means WAV header only (no PCM payload was captured).
+   - This usually means mic I2S/PDM did not deliver data to the recorder.
+   - Verify mic pins are exactly `CLK=45`, `DATA=46`, and that mic bus is initialized before audio output bus.
+   - Check logs for periodic `Recording ... <bytes>` lines while recording.
+   - If your SD component mounts root (`/`) instead of `/sdcard`, use `/recording.wav` path in YAML.
