@@ -54,17 +54,25 @@ speaker:
     i2s_audio_id: i2s_out
     dac_type: external
     i2s_dout_pin: GPIO41
-    channel: mono
+    channel: stereo
 
 media_player:
   - platform: speaker
     id: player
     name: ESP32 Speaker
+    # Keep announcements low-bandwidth and deterministic for Assist replies
     announcement_pipeline:
       speaker: spk
       format: WAV
       sample_rate: 16000
       num_channels: 1
+
+    # Music Assistant / streaming path (commonly FLAC 48k stereo)
+    media_pipeline:
+      speaker: spk
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 2
 
 # Voice Assistant path to test mic + speaker in Home Assistant.
 # Requires Assist pipeline configured in HA.
@@ -79,10 +87,12 @@ button:
   - platform: template
     name: "VA Start Continuous"
     on_press:
-      - voice_assistant.start_continuous: va
+      - voice_assistant.start_continuous:
+          id: va
 
   - platform: template
     name: "VA Stop"
     on_press:
-      - voice_assistant.stop: va
+      - voice_assistant.stop:
+          id: va
 

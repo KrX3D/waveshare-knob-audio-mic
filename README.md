@@ -446,3 +446,26 @@ If your priority is **Voice + media_player** together, prefer the built-in path 
 4. Add explicit VA start/stop buttons if wake-word is not configured.
 
 The updated `example_builtin_voice_assistant.yaml` includes these controls.
+
+
+## `speaker_media_player` `ESP_FAIL` while streaming (Music Assistant)
+
+If logs show:
+- `speaker_media_player.pipeline: Media reader encountered an error: ESP_FAIL`
+- `announcement pipeline's file reader encountered an error`
+
+Most common causes:
+1. **Format mismatch** (pipeline expects WAV but stream is FLAC/MP3/AAC).
+2. **Pipeline profile mismatch** (announcement profile used for music stream).
+3. **Network/auth URL issue** while fetching stream.
+
+Recommended config pattern:
+- keep `announcement_pipeline` as `WAV 16k mono` (best for Assist responses),
+- add a dedicated `media_pipeline` for music streaming (for MA usually `FLAC 48k stereo`).
+
+The updated `example_builtin_voice_assistant.yaml` now includes this split profile.
+
+Quick validation steps:
+1. Test HA TTS first (announcement path) to confirm basic speaker output.
+2. Then test Music Assistant streaming (media path).
+3. If ESP_FAIL persists, temporarily lower media pipeline to `WAV 16000 1ch` to isolate decoder/stream format issues.
