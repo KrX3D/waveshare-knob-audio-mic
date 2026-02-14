@@ -1,0 +1,115 @@
+esphome:
+  name: smartknob_builtin_audio_va
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+logger:
+api:
+ota:
+
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
+
+# Optional. Keep disabled if it conflicts with your audio pins.
+# uart:
+#   id: audio_uart
+#   tx_pin: GPIO40
+#   rx_pin: GPIO39
+#   baud_rate: 115200
+
+# IMPORTANT:
+# - Do not keep custom waveshare_audio/waveshare_mic enabled in the same firmware profile.
+# - Put microphone bus first so ESPHome allocates I2S0 first (PDM RX on S3 works best there).
+# - ESPHome still requires i2s_lrclk_pin in schema for mic bus; use a free dummy pin.
+i2s_audio:
+  - id: i2s_mic
+    i2s_bclk_pin: GPIO45
+    i2s_lrclk_pin: GPIO37  # dummy/free pin, PDM path does not use LRCLK
+
+  - id: i2s_out
+    i2s_bclk_pin: GPIO39
+    i2s_lrclk_pin: GPIO40
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_mic
+    adc_type: external
+    i2s_din_pin: GPIO46
+    pdm: true
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+speaker:
+  - platform: i2s_audio
+    id: spk_out
+    i2s_audio_id: i2s_out
+    dac_type: external
+    i2s_dout_pin: GPIO41
+    channel: stereo
+
+  # speaker_media_player requires different source speakers for
+  # announcement_pipeline and media_pipeline. Mixer provides those inputs.
+  - platform: mixer
+    id: spk_mixer
+    output_speaker: spk_out
+    source_speakers:
+      - id: spk_ann
+      - id: spk_media
+
+media_player:
+  - platform: speaker
+    id: player
+    name: ESP32 Speaker
+    # Keep announcements low-bandwidth and deterministic for Assist replies
+    announcement_pipeline:
+      speaker: spk_ann
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+
+    # Music Assistant / streaming path (commonly FLAC 48k stereo)
+    media_pipeline:
+      speaker: spk_media
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 2
+
+# Voice Assistant path to test mic + speaker in Home Assistant.
+# Requires Assist pipeline configured in HA.
+voice_assistant:
+  id: va
+  microphone: mic
+  media_player: player
+
+
+# Optional controls to verify VA pipeline from HA without wake-word setup.
+button:
+  - platform: template
+    name: "VA Start Continuous"
+    on_press:
+      - voice_assistant.start_continuous:
+          id: va
+
+  - platform: template
+    name: "VA Stop"
+    on_press:
+      - voice_assistant.stop:
+          id: va
+
