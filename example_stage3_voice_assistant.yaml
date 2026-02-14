@@ -1,0 +1,97 @@
+esphome:
+  name: smartknob_stage3_voice
+  on_boot:
+    priority: 700
+    then:
+      - output.turn_on: dac_route_en
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+
+logger:
+api:
+ota:
+
+output:
+  - platform: gpio
+    pin: GPIO0
+    id: dac_route_en
+
+i2s_audio:
+  - id: i2s_mic
+    i2s_bclk_pin: GPIO45
+    i2s_lrclk_pin: GPIO37
+
+  - id: i2s_out
+    i2s_bclk_pin: GPIO39
+    i2s_lrclk_pin: GPIO40
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_mic
+    adc_type: external
+    i2s_din_pin: GPIO46
+    pdm: true
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+speaker:
+  - platform: i2s_audio
+    id: spk_out
+    i2s_audio_id: i2s_out
+    dac_type: external
+    i2s_dout_pin: GPIO41
+    channel: mono
+
+  - platform: mixer
+    id: spk_mixer
+    output_speaker: spk_out
+    source_speakers:
+      - id: spk_ann
+      - id: spk_media
+
+media_player:
+  - platform: speaker
+    id: player
+    name: ESP32 Speaker
+    announcement_pipeline:
+      speaker: spk_ann
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+    media_pipeline:
+      speaker: spk_media
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+
+voice_assistant:
+  id: va
+  microphone: mic
+  media_player: player
+
+button:
+  - platform: template
+    name: "VA Start Continuous"
+    on_press:
+      - voice_assistant.start_continuous:
+          id: va
+
+  - platform: template
+    name: "VA Stop"
+    on_press:
+      - voice_assistant.stop:
+          id: va
