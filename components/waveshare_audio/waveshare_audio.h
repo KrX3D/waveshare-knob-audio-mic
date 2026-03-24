@@ -34,7 +34,7 @@ class WaveshareAudio : public Component {
   bool is_playing() const { return this->playback_task_ != nullptr; }
 
  protected:
-  // Parsed fields from a WAV file header (standard 44-byte PCM layout).
+  // Parsed fields from a standard 44-byte PCM WAV header.
   struct WavHeader {
     uint16_t num_channels{1};
     uint32_t sample_rate{44100};
@@ -43,13 +43,29 @@ class WaveshareAudio : public Component {
   };
 
   bool init_i2s_();
-  // Reconfigures the I2S TX channel slot mode only when it differs from the
-  // current mode, avoiding redundant disable/enable cycles.
+
+  // Enables the TX channel if it is currently disabled (no-op when already enabled).
+  bool enable_channel_();
+
+  // Disables the TX channel so the PCM5100A loses the I2S clock and enters
+  // hardware auto-mute mode.  This is the primary fix for idle buzzing.
+  void disable_channel_();
+
+  // Reconfigures the I2S TX clock rate when target_rate differs from the
+  // currently active rate.  Handles the required disable/enable cycle.
+  // Root cause fix for "plays too fast": the WAV file sample rate is now
+  // applied to the hardware clock before each playback starts.
+  bool reconfigure_clock_if_needed_(uint32_t target_rate);
+
+  // Reconfigures the I2S TX slot mode when num_channels differs from the
+  // currently active mode.  Handles the required disable/enable cycle.
   bool reconfigure_slot_if_needed_(uint16_t num_channels);
+
   // Reads and validates a standard 44-byte PCM WAV header.
-  // Returns a WavHeader with valid=false on any parse failure.
-  // On success the file pointer is positioned at the audio data start (offset 44).
+  // On success the file pointer is positioned at offset 44 (audio data start).
+  // Returns WavHeader with valid=false on any parse failure.
   WavHeader read_wav_header_(FILE *fp);
+
   bool write_pcm_(const int16_t *pcm, size_t bytes);
   bool play_sine_(float freq_hz, uint32_t duration_ms);
   bool play_file_blocking_(const std::string &path);
@@ -62,15 +78,23 @@ class WaveshareAudio : public Component {
   int ws_pin_{40};
   int dout_pin_{41};
   int enable_pin_{0};
-  uint32_t sample_rate_{44100};
+  uint32_t sample_rate_{16000};
   std::string default_file_{"/sdcard/recording.wav"};
   float gain_{0.25f};
 
   i2s_chan_handle_t tx_chan_{nullptr};
   bool ready_{false};
 
-  // std::atomic<bool> ensures cross-core memory visibility on dual-core S3.
-  // volatile bool alone only prevents compiler optimisation, not CPU reordering.
+  // The channel is kept DISABLED when idle.  PCM5100A loses the I2S clock
+  // and auto-mutes, which eliminates the constant idle buzz.
+  bool channel_enabled_{false};
+
+  // Active hardware configuration — tracked so reconfigure helpers can skip
+  // redundant disable/enable cycles on consecutive files that match.
+  uint32_t current_sample_rate_{0};
+  i2s_slot_mode_t current_slot_mode_{I2S_SLOT_MODE_MONO};
+
+  // std::atomic<bool> provides cross-core memory ordering on dual-core S3.
   std::atomic<bool> stop_requested_{false};
 
   TaskHandle_t playback_task_{nullptr};
@@ -80,11 +104,12 @@ class WaveshareAudio : public Component {
   int16_t *scale_buf_{nullptr};
   static constexpr size_t SCALE_BUF_SAMPLES = 2048;
 
-  // Tracks the active I2S slot mode so reconfigure_slot_if_needed_() can skip
-  // redundant reconfigurations when consecutive files have the same channel count.
-  i2s_slot_mode_t current_slot_mode_{I2S_SLOT_MODE_MONO};
+  enum PlaybackMode : uint8_t {
+    PLAYBACK_NONE = 0,
+    PLAYBACK_FILE = 1,
+    PLAYBACK_BUZZ = 2,
+  } playback_mode_{PLAYBACK_NONE};
 
-  enum PlaybackMode : uint8_t { PLAYBACK_NONE = 0, PLAYBACK_FILE = 1, PLAYBACK_BUZZ = 2 } playback_mode_{PLAYBACK_NONE};
   std::string pending_file_{};
   BuzzPattern pending_buzz_{BUZZ_SINE};
 };

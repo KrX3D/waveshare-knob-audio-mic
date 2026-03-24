@@ -15,15 +15,15 @@ class WaveshareMic : public Component {
   void loop() override;
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
-  void set_pdm_clock_pin(int pin) { this->pdm_clock_pin_ = pin; }
-  void set_pdm_data_pin(int pin) { this->pdm_data_pin_ = pin; }
-  void set_sample_rate(uint32_t sample_rate) { this->sample_rate_ = sample_rate; }
-  void set_default_path(const std::string &path) { this->default_path_ = path; }
-  void set_buffer_bytes(size_t bytes) { this->buffer_bytes_ = bytes; }
+  void set_pdm_clock_pin(int pin)          { this->pdm_clock_pin_ = pin;    }
+  void set_pdm_data_pin(int pin)           { this->pdm_data_pin_  = pin;    }
+  void set_sample_rate(uint32_t sr)        { this->sample_rate_   = sr;     }
+  void set_default_path(const std::string &p) { this->default_path_ = p;   }
+  void set_buffer_bytes(size_t b)          { this->buffer_bytes_  = b;      }
 
-  bool start_recording(const std::string &path = "");
-  void stop_recording();
-  bool is_recording() const { return this->recording_; }
+  bool     start_recording(const std::string &path = "");
+  void     stop_recording();
+  bool     is_recording() const { return this->recording_; }
   uint32_t recording_ms() const;
 
  protected:
@@ -33,32 +33,31 @@ class WaveshareMic : public Component {
   bool write_wav_header_placeholder_();
   void finalize_wav_header_();
 
-  int pdm_clock_pin_{45};
-  int pdm_data_pin_{46};
-  uint32_t sample_rate_{44100};
+  int      pdm_clock_pin_{45};
+  int      pdm_data_pin_{46};
+  uint32_t sample_rate_{16000};
 
-  // The path configured in YAML.  Never mutated at runtime so that repeated
-  // start_recording() calls without an explicit path always resolve back to
-  // the YAML-configured default.
+  // Path configured in YAML.  Never mutated at runtime so repeated calls to
+  // start_recording() without an explicit path always resolve to this value.
   std::string default_path_{"/sdcard/recording.wav"};
 
-  // Resolved path for the currently active (or most recent) recording.
-  // Separate from default_path_ to avoid silently overwriting the YAML value
-  // when start_recording() is called with an explicit path argument.
+  // Resolved path for the active / most-recent recording.  Separate from
+  // default_path_ so start_recording("/sdcard/other.wav") does not silently
+  // overwrite the YAML-configured default.
   std::string current_path_{};
 
   size_t buffer_bytes_{4096};
 
-  bool i2s_ready_{false};
-  bool recording_{false};
+  bool     i2s_ready_{false};
+  bool     recording_{false};
   uint32_t start_ms_{0};
   uint32_t bytes_written_{0};
   uint32_t last_recording_ms_{0};
   uint32_t last_stats_log_ms_{0};
 
   i2s_chan_handle_t rx_chan_{nullptr};
-  FILE *record_file_{nullptr};
-  int16_t *buffer_{nullptr};
+  FILE     *record_file_{nullptr};
+  int16_t  *buffer_{nullptr};
 };
 
 }  // namespace waveshare_mic

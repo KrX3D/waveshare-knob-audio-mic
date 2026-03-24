@@ -16,21 +16,26 @@ namespace waveshare_audio {
 
 static const char *const TAG = "waveshare_audio";
 
+// ---------------------------------------------------------------------------
+// setup
+// ---------------------------------------------------------------------------
+
 void WaveshareAudio::setup() {
   // Drive PCM5100A route-enable pin HIGH, matching Arduino audio_gpio_init().
   gpio_config_t gpio_conf = {};
-  gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-  gpio_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-  gpio_conf.intr_type = GPIO_INTR_DISABLE;
-  gpio_conf.pin_bit_mask = (1ULL << static_cast<uint32_t>(this->enable_pin_));
-  gpio_conf.mode = GPIO_MODE_OUTPUT;
+  gpio_conf.pull_down_en  = GPIO_PULLDOWN_DISABLE;
+  gpio_conf.pull_up_en    = GPIO_PULLUP_ENABLE;
+  gpio_conf.intr_type     = GPIO_INTR_DISABLE;
+  gpio_conf.pin_bit_mask  = (1ULL << static_cast<uint32_t>(this->enable_pin_));
+  gpio_conf.mode          = GPIO_MODE_OUTPUT;
   gpio_config(&gpio_conf);
   gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 1);
 
-  // Pre-allocate the gain-scaling buffer in SPIRAM so write_pcm_() never
+  // Pre-allocate gain-scaling buffer in SPIRAM so write_pcm_() never
   // touches the internal heap allocator at audio rate.
   this->scale_buf_ = static_cast<int16_t *>(
-      heap_caps_malloc(SCALE_BUF_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      heap_caps_malloc(SCALE_BUF_SAMPLES * sizeof(int16_t),
+                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (this->scale_buf_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate scale buffer (%u bytes)",
              static_cast<unsigned>(SCALE_BUF_SAMPLES * sizeof(int16_t)));
@@ -45,8 +50,13 @@ void WaveshareAudio::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Audio output ready (sample_rate=%u)", this->sample_rate_);
+  ESP_LOGI(TAG, "Audio output ready (sample_rate=%u) — channel idle/muted",
+           this->sample_rate_);
 }
+
+// ---------------------------------------------------------------------------
+// I2S init — channel starts DISABLED so PCM5100A auto-mutes on boot
+// ---------------------------------------------------------------------------
 
 bool WaveshareAudio::init_i2s_() {
   i2s_chan_config_t tx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
@@ -58,7 +68,8 @@ bool WaveshareAudio::init_i2s_() {
 
   i2s_std_config_t tx_std_cfg = {
       .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(this->sample_rate_),
-      .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+      .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                    I2S_SLOT_MODE_MONO),
       .gpio_cfg = {
           .mclk = I2S_GPIO_UNUSED,
           .bclk = static_cast<gpio_num_t>(this->bclk_pin_),
@@ -79,14 +90,70 @@ bool WaveshareAudio::init_i2s_() {
     return false;
   }
 
-  err = i2s_channel_enable(this->tx_chan_);
+  // NOTE: intentionally NOT calling i2s_channel_enable() here.
+  // The channel starts disabled; PCM5100A receives no clock and auto-mutes.
+  // enable_channel_() is called only when playback actually begins.
+  this->channel_enabled_     = false;
+  this->current_sample_rate_ = this->sample_rate_;
+  this->current_slot_mode_   = I2S_SLOT_MODE_MONO;
+  this->ready_               = true;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Channel enable / disable helpers
+// ---------------------------------------------------------------------------
+
+bool WaveshareAudio::enable_channel_() {
+  if (this->channel_enabled_)
+    return true;
+  esp_err_t err = i2s_channel_enable(this->tx_chan_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(err));
     return false;
   }
+  this->channel_enabled_ = true;
+  return true;
+}
 
-  this->current_slot_mode_ = I2S_SLOT_MODE_MONO;
-  this->ready_ = true;
+void WaveshareAudio::disable_channel_() {
+  if (!this->channel_enabled_)
+    return;
+  i2s_channel_disable(this->tx_chan_);
+  this->channel_enabled_ = false;
+}
+
+// ---------------------------------------------------------------------------
+// Reconfigure helpers — fix for "plays too fast" and stereo/mono mismatch
+//
+// Both helpers manage the disable/enable cycle internally so callers do not
+// need to track channel state.
+// ---------------------------------------------------------------------------
+
+bool WaveshareAudio::reconfigure_clock_if_needed_(uint32_t target_rate) {
+  if (target_rate == this->current_sample_rate_)
+    return true;
+
+  ESP_LOGI(TAG, "Reconfiguring I2S clock: %u Hz -> %u Hz",
+           this->current_sample_rate_, target_rate);
+
+  // Channel must be disabled before reconfiguring.
+  bool was_enabled = this->channel_enabled_;
+  this->disable_channel_();
+
+  i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(target_rate);
+  esp_err_t err = i2s_channel_reconfig_std_clock(this->tx_chan_, &clk_cfg);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "i2s_channel_reconfig_std_clock failed: %s", esp_err_to_name(err));
+    // Attempt to restore previous state.
+    if (was_enabled) this->enable_channel_();
+    return false;
+  }
+
+  this->current_sample_rate_ = target_rate;
+
+  if (was_enabled)
+    return this->enable_channel_();
   return true;
 }
 
@@ -98,30 +165,28 @@ bool WaveshareAudio::reconfigure_slot_if_needed_(uint16_t num_channels) {
   ESP_LOGI(TAG, "Reconfiguring I2S slot mode -> %s",
            (target == I2S_SLOT_MODE_STEREO) ? "stereo" : "mono");
 
-  esp_err_t err = i2s_channel_disable(this->tx_chan_);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "i2s_channel_disable failed: %s", esp_err_to_name(err));
-    return false;
-  }
+  bool was_enabled = this->channel_enabled_;
+  this->disable_channel_();
 
-  i2s_std_slot_config_t slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, target);
-  err = i2s_channel_reconfig_std_slot(this->tx_chan_, &slot_cfg);
+  i2s_std_slot_config_t slot_cfg =
+      I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, target);
+  esp_err_t err = i2s_channel_reconfig_std_slot(this->tx_chan_, &slot_cfg);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "i2s_channel_reconfig_std_slot failed: %s", esp_err_to_name(err));
-    // Attempt to restore the channel even if reconfig failed.
-    i2s_channel_enable(this->tx_chan_);
-    return false;
-  }
-
-  err = i2s_channel_enable(this->tx_chan_);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "i2s_channel_enable after reconfig failed: %s", esp_err_to_name(err));
+    if (was_enabled) this->enable_channel_();
     return false;
   }
 
   this->current_slot_mode_ = target;
+
+  if (was_enabled)
+    return this->enable_channel_();
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// WAV header parser
+// ---------------------------------------------------------------------------
 
 WaveshareAudio::WavHeader WaveshareAudio::read_wav_header_(FILE *fp) {
   WavHeader hdr;
@@ -141,30 +206,33 @@ WaveshareAudio::WavHeader WaveshareAudio::read_wav_header_(FILE *fp) {
   }
 
   hdr.num_channels    = static_cast<uint16_t>(buf[22] | (buf[23] << 8));
-  hdr.sample_rate     = static_cast<uint32_t>(buf[24] | (buf[25] << 8) | (buf[26] << 16) | (buf[27] << 24));
+  hdr.sample_rate     = static_cast<uint32_t>(
+      buf[24] | (buf[25] << 8) | (buf[26] << 16) | (buf[27] << 24));
   hdr.bits_per_sample = static_cast<uint16_t>(buf[34] | (buf[35] << 8));
 
-  // Only 16-bit mono/stereo PCM is supported by this component.
-  hdr.valid = (hdr.num_channels >= 1 && hdr.num_channels <= 2 && hdr.bits_per_sample == 16);
+  hdr.valid = (hdr.num_channels >= 1 && hdr.num_channels <= 2 &&
+               hdr.bits_per_sample == 16 &&
+               hdr.sample_rate >= 8000 && hdr.sample_rate <= 48000);
 
   if (!hdr.valid) {
-    ESP_LOGW(TAG, "Unsupported WAV format: %u ch, %u-bit — falling back to mono 16-bit",
-             hdr.num_channels, hdr.bits_per_sample);
-  } else {
-    // File pointer is already at offset 44 (audio data start) after fread.
+    ESP_LOGW(TAG, "Unsupported WAV format: %u ch, %u-bit, %u Hz — "
+             "falling back to configured defaults",
+             hdr.num_channels, hdr.bits_per_sample, hdr.sample_rate);
   }
-
+  // After fread of 44 bytes the file pointer is at offset 44 — audio data start.
   return hdr;
 }
+
+// ---------------------------------------------------------------------------
+// Core audio I/O
+// ---------------------------------------------------------------------------
 
 bool WaveshareAudio::write_pcm_(const int16_t *pcm, size_t bytes) {
   if (!this->ready_ || this->stop_requested_)
     return false;
 
-  // Clamp to pre-allocated buffer capacity.
   size_t n = std::min(bytes / sizeof(int16_t), SCALE_BUF_SAMPLES);
-
-  float g = this->gain_;
+  float g  = this->gain_;
   for (size_t i = 0; i < n; i++)
     this->scale_buf_[i] = static_cast<int16_t>(pcm[i] * g);
 
@@ -174,8 +242,8 @@ bool WaveshareAudio::write_pcm_(const int16_t *pcm, size_t bytes) {
   while (total_written < write_bytes && !this->stop_requested_) {
     size_t just_written = 0;
     const auto *ptr     = reinterpret_cast<const uint8_t *>(this->scale_buf_) + total_written;
-    esp_err_t err       = i2s_channel_write(this->tx_chan_, ptr, write_bytes - total_written,
-                                            &just_written, pdMS_TO_TICKS(100));
+    esp_err_t err = i2s_channel_write(this->tx_chan_, ptr, write_bytes - total_written,
+                                      &just_written, pdMS_TO_TICKS(100));
     if (err != ESP_OK) {
       ESP_LOGW(TAG, "i2s write failed (%s)", esp_err_to_name(err));
       return false;
@@ -189,17 +257,21 @@ bool WaveshareAudio::write_pcm_(const int16_t *pcm, size_t bytes) {
 }
 
 void WaveshareAudio::write_silence_(uint32_t duration_ms) {
-  // Stack-allocated zero buffer — small enough (512 bytes) to be fine here.
   int16_t zeros[256] = {};
-  uint32_t sample_count = (this->sample_rate_ * duration_ms) / 1000;
+  uint32_t sample_count = (this->current_sample_rate_ * duration_ms) / 1000;
   uint32_t sent = 0;
   while (sent < sample_count && !this->stop_requested_) {
     size_t chunk = std::min<size_t>(256, sample_count - sent);
     size_t bytes_written = 0;
-    i2s_channel_write(this->tx_chan_, zeros, chunk * sizeof(int16_t), &bytes_written, pdMS_TO_TICKS(20));
+    i2s_channel_write(this->tx_chan_, zeros, chunk * sizeof(int16_t),
+                      &bytes_written, pdMS_TO_TICKS(20));
     sent += chunk;
   }
 }
+
+// ---------------------------------------------------------------------------
+// File playback
+// ---------------------------------------------------------------------------
 
 bool WaveshareAudio::play_file_blocking_(const std::string &path) {
   FILE *fp = fopen(path.c_str(), "rb");
@@ -211,24 +283,41 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
   fseek(fp, 0, SEEK_END);
   long file_size = ftell(fp);
 
-  // Parse WAV header to detect channel count and configure I2S accordingly.
   WavHeader hdr = this->read_wav_header_(fp);
   if (!hdr.valid) {
-    // Fall back to mono 16-bit and skip the 44-byte header manually.
+    // Fall back to YAML-configured defaults and skip the 44-byte header.
     hdr.num_channels = 1;
+    hdr.sample_rate  = this->sample_rate_;
     fseek(fp, 44, SEEK_SET);
   }
 
-  ESP_LOGI(TAG, "Playing %s (%ld bytes, %u ch, %u Hz, %u bit)",
-           path.c_str(), file_size, hdr.num_channels, hdr.sample_rate, hdr.bits_per_sample);
+  ESP_LOGI(TAG, "Playing %s (%ld bytes, %u ch, %u Hz, %u-bit)",
+           path.c_str(), file_size, hdr.num_channels,
+           hdr.sample_rate, hdr.bits_per_sample);
 
-  if (!this->reconfigure_slot_if_needed_(hdr.num_channels)) {
-    ESP_LOGE(TAG, "Failed to configure I2S slot mode for playback");
+  // Apply the WAV file's sample rate to the I2S hardware clock BEFORE
+  // enabling the channel.  This is the fix for "plays too fast": a mismatch
+  // between the file's rate and the active hardware clock stretches or
+  // compresses the audio in time.
+  if (!this->reconfigure_clock_if_needed_(hdr.sample_rate)) {
+    ESP_LOGE(TAG, "Failed to reconfigure I2S clock for %u Hz", hdr.sample_rate);
     fclose(fp);
     return false;
   }
 
-  // Stack-allocated read block — 2 KiB is safe with the 8192-byte task stack.
+  if (!this->reconfigure_slot_if_needed_(hdr.num_channels)) {
+    ESP_LOGE(TAG, "Failed to configure I2S slot mode");
+    fclose(fp);
+    return false;
+  }
+
+  // Enable the channel just before we start writing — PCM5100A wakes from
+  // auto-mute when the I2S clock resumes.
+  if (!this->enable_channel_()) {
+    fclose(fp);
+    return false;
+  }
+
   int16_t block[1024];
   bool ok = true;
 
@@ -249,32 +338,37 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
   return ok && !this->stop_requested_;
 }
 
+// ---------------------------------------------------------------------------
+// Buzz / tone generation
+// ---------------------------------------------------------------------------
+
 bool WaveshareAudio::play_sine_(float freq_hz, uint32_t duration_ms) {
   if (!this->ready_) return false;
 
-  const float amplitude  = 28000.0f;
-  const uint32_t sample_count = (this->sample_rate_ * duration_ms) / 1000;
-  const uint32_t fade_samples = std::max<uint32_t>(1, this->sample_rate_ / 200);  // ~5 ms
-  int16_t samples[256];
+  const float    amplitude    = 28000.0f;
+  const uint32_t sample_count = (this->current_sample_rate_ * duration_ms) / 1000;
+  const uint32_t fade_samples = std::max<uint32_t>(1, this->current_sample_rate_ / 200);
+  int16_t        samples[256];
 
   uint32_t generated = 0;
   while (generated < sample_count && !this->stop_requested_) {
-    size_t to_generate = std::min<size_t>(256, sample_count - generated);
-    for (size_t i = 0; i < to_generate; i++) {
+    size_t to_gen = std::min<size_t>(256, sample_count - generated);
+    for (size_t i = 0; i < to_gen; i++) {
       uint32_t idx = generated + i;
-      float t   = static_cast<float>(idx) / static_cast<float>(this->sample_rate_);
+      float t   = static_cast<float>(idx) / static_cast<float>(this->current_sample_rate_);
       float env = 1.0f;
       if (idx < fade_samples)
         env = static_cast<float>(idx) / static_cast<float>(fade_samples);
       else if (idx + fade_samples > sample_count)
         env = static_cast<float>(sample_count - idx) / static_cast<float>(fade_samples);
       samples[i] = (freq_hz > 0.0f)
-          ? static_cast<int16_t>(amplitude * env * sinf(2.0f * static_cast<float>(M_PI) * freq_hz * t))
+          ? static_cast<int16_t>(amplitude * env *
+                sinf(2.0f * static_cast<float>(M_PI) * freq_hz * t))
           : 0;
     }
-    if (!this->write_pcm_(samples, to_generate * sizeof(int16_t)))
+    if (!this->write_pcm_(samples, to_gen * sizeof(int16_t)))
       return false;
-    generated += to_generate;
+    generated += to_gen;
   }
   return !this->stop_requested_;
 }
@@ -282,15 +376,19 @@ bool WaveshareAudio::play_sine_(float freq_hz, uint32_t duration_ms) {
 bool WaveshareAudio::play_buzz_blocking_(BuzzPattern pattern) {
   if (!this->ready_) return false;
 
-  // Buzz patterns are always mono sine waves. If a stereo WAV was played
-  // previously, restore mono mode before generating tone data.
+  // Buzz patterns are mono sine waves — restore mono and YAML sample rate,
+  // then enable the channel.
+  if (!this->reconfigure_clock_if_needed_(this->sample_rate_)) return false;
   if (!this->reconfigure_slot_if_needed_(1)) return false;
+  if (!this->enable_channel_()) return false;
 
   switch (pattern) {
     case BUZZ_SINE:
       return this->play_sine_(880.0f, 250);
     case BUZZ_DOUBLE_BEEP:
-      return this->play_sine_(660.0f, 120) && this->play_sine_(0.0f, 70) && this->play_sine_(660.0f, 120);
+      return this->play_sine_(660.0f, 120) &&
+             this->play_sine_(0.0f, 70)    &&
+             this->play_sine_(660.0f, 120);
     case BUZZ_ALARM:
       for (int i = 0; i < 3; i++) {
         if (!this->play_sine_(1200.0f, 140) || !this->play_sine_(700.0f, 140))
@@ -301,6 +399,10 @@ bool WaveshareAudio::play_buzz_blocking_(BuzzPattern pattern) {
       return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Playback task
+// ---------------------------------------------------------------------------
 
 void WaveshareAudio::playback_task_trampoline_(void *arg) {
   auto *self = static_cast<WaveshareAudio *>(arg);
@@ -314,17 +416,23 @@ void WaveshareAudio::playback_task_trampoline_(void *arg) {
   if (!ok && !self->stop_requested_)
     ESP_LOGW(TAG, "Playback ended with error");
 
+  // Flush DMA before disabling so the DAC does not click.
   self->write_silence_(40);
 
-  // IMPORTANT: null playback_task_ BEFORE calling vTaskDelete(nullptr).
-  // If the main core reads playback_task_ after this task has deleted itself
-  // but before the pointer was cleared, it would dereference a dangling handle.
-  // Clearing first ensures play_file() / play_buzz() see the task as gone.
+  // Disable the I2S channel — PCM5100A auto-mutes, eliminating idle buzz.
+  self->disable_channel_();
+
+  // IMPORTANT: null playback_task_ BEFORE vTaskDelete(nullptr) to avoid the
+  // main core reading a dangling handle between task deletion and pointer clear.
   self->stop_requested_ = false;
   self->playback_mode_  = PLAYBACK_NONE;
   self->playback_task_  = nullptr;
   vTaskDelete(nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 bool WaveshareAudio::play_file(const std::string &path) {
   if (!this->ready_) return false;
@@ -337,10 +445,9 @@ bool WaveshareAudio::play_file(const std::string &path) {
   this->stop_requested_ = false;
   this->playback_mode_  = PLAYBACK_FILE;
 
-  // 8192-byte stack: headroom for a 2 KiB read block + 512-byte silence buffer
-  // + sine sample array + call chain.  The original 4096 was too tight.
-  BaseType_t r = xTaskCreate(WaveshareAudio::playback_task_trampoline_, "ws_audio_play",
-                              8192, this, 4, &this->playback_task_);
+  BaseType_t r = xTaskCreate(WaveshareAudio::playback_task_trampoline_,
+                              "ws_audio_play", 8192, this, 4,
+                              &this->playback_task_);
   if (r != pdPASS) {
     this->playback_task_ = nullptr;
     ESP_LOGE(TAG, "Failed to create playback task");
@@ -360,8 +467,9 @@ bool WaveshareAudio::play_buzz(BuzzPattern pattern) {
   this->stop_requested_ = false;
   this->playback_mode_  = PLAYBACK_BUZZ;
 
-  BaseType_t r = xTaskCreate(WaveshareAudio::playback_task_trampoline_, "ws_audio_buzz",
-                              8192, this, 4, &this->playback_task_);
+  BaseType_t r = xTaskCreate(WaveshareAudio::playback_task_trampoline_,
+                              "ws_audio_buzz", 8192, this, 4,
+                              &this->playback_task_);
   if (r != pdPASS) {
     this->playback_task_ = nullptr;
     ESP_LOGE(TAG, "Failed to create buzz task");
@@ -373,9 +481,11 @@ bool WaveshareAudio::play_buzz(BuzzPattern pattern) {
 void WaveshareAudio::stop() {
   if (!this->ready_) return;
   this->stop_requested_ = true;
-  this->write_silence_(30);
-  i2s_channel_disable(this->tx_chan_);
-  i2s_channel_enable(this->tx_chan_);
+  // Flush then disable — PCM5100A auto-mutes when clock stops.
+  if (this->channel_enabled_) {
+    this->write_silence_(30);
+    this->disable_channel_();
+  }
 }
 
 }  // namespace waveshare_audio

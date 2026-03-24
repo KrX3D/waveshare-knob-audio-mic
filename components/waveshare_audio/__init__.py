@@ -5,12 +5,12 @@ from esphome.const import CONF_ID, CONF_SAMPLE_RATE
 DEPENDENCIES = []
 CODEOWNERS = ["@KrX3D"]
 
-CONF_BCLK_PIN = "bclk_pin"
-CONF_WS_PIN = "ws_pin"
-CONF_DOUT_PIN = "dout_pin"
+CONF_BCLK_PIN    = "bclk_pin"
+CONF_WS_PIN      = "ws_pin"
+CONF_DOUT_PIN    = "dout_pin"
 CONF_DEFAULT_FILE = "default_file"
-CONF_GAIN = "gain"
-CONF_ENABLE_PIN = "enable_pin"
+CONF_GAIN        = "gain"
+CONF_ENABLE_PIN  = "enable_pin"
 
 waveshare_audio_ns = cg.esphome_ns.namespace("waveshare_audio")
 WaveshareAudio = waveshare_audio_ns.class_("WaveshareAudio", cg.Component)
@@ -28,16 +28,15 @@ def validate_gpio_num(value):
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareAudio),
-        # Pins are Required: there are no universal defaults across board
-        # revisions — the 39/40/41 mapping is Waveshare-specific and must be
-        # explicit in YAML so users are never silently misconfigured.
-        cv.Required(CONF_BCLK_PIN): validate_gpio_num,
-        cv.Required(CONF_WS_PIN): validate_gpio_num,
-        cv.Required(CONF_DOUT_PIN): validate_gpio_num,
-        cv.Optional(CONF_SAMPLE_RATE, default=44100): cv.int_range(min=8000, max=48000),
+        # Pins are Required: 39/40/41 are Waveshare-specific — there are no
+        # universal defaults across board revisions, so they must be explicit.
+        cv.Required(CONF_BCLK_PIN):  validate_gpio_num,
+        cv.Required(CONF_WS_PIN):    validate_gpio_num,
+        cv.Required(CONF_DOUT_PIN):  validate_gpio_num,
+        cv.Optional(CONF_SAMPLE_RATE,  default=16000):              cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_DEFAULT_FILE, default="/sdcard/recording.wav"): cv.string,
-        cv.Optional(CONF_GAIN, default=0.25): cv.float_range(min=0.0, max=1.0),
-        cv.Optional(CONF_ENABLE_PIN, default=0): validate_gpio_num,
+        cv.Optional(CONF_GAIN,         default=0.25):               cv.float_range(min=0.0, max=1.0),
+        cv.Optional(CONF_ENABLE_PIN,   default=0):                  validate_gpio_num,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
