@@ -36,7 +36,17 @@ class WaveshareMic : public Component {
   int pdm_clock_pin_{45};
   int pdm_data_pin_{46};
   uint32_t sample_rate_{44100};
+
+  // The path configured in YAML.  Never mutated at runtime so that repeated
+  // start_recording() calls without an explicit path always resolve back to
+  // the YAML-configured default.
   std::string default_path_{"/sdcard/recording.wav"};
+
+  // Resolved path for the currently active (or most recent) recording.
+  // Separate from default_path_ to avoid silently overwriting the YAML value
+  // when start_recording() is called with an explicit path argument.
+  std::string current_path_{};
+
   size_t buffer_bytes_{4096};
 
   bool i2s_ready_{false};

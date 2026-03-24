@@ -2,6 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_SAMPLE_RATE
 
+DEPENDENCIES = []
 CODEOWNERS = ["@KrX3D"]
 
 CONF_BCLK_PIN = "bclk_pin"
@@ -23,9 +24,13 @@ def validate_gpio_num(value):
     value = cv.int_(value)
     return cv.int_range(min=0, max=48)(value)
 
+
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareAudio),
+        # Pins are Required: there are no universal defaults across board
+        # revisions — the 39/40/41 mapping is Waveshare-specific and must be
+        # explicit in YAML so users are never silently misconfigured.
         cv.Required(CONF_BCLK_PIN): validate_gpio_num,
         cv.Required(CONF_WS_PIN): validate_gpio_num,
         cv.Required(CONF_DOUT_PIN): validate_gpio_num,
