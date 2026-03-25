@@ -86,15 +86,9 @@ class WaveshareAudio : public Component {
   bool ready_{false};
 
   // Whether the I2S TX channel is currently enabled.
+  // The channel is kept disabled when idle so the PCM5100A eventually
+  // auto-mutes once 1034 silence frames have been written before shutdown.
   bool channel_enabled_{false};
-
-  // Whether the PCM5100A XSMT pin is currently muted (enable_pin_ LOW).
-  // Root cause of post-playback buzzing: i2s_channel_disable() stops DMA but
-  // leaves BCLK electrically stuck HIGH.  The PCM5100A sees a frozen-high
-  // clock as a "paused bus" rather than "no clock", so its own auto-mute
-  // never fires and it keeps buzzing.  Asserting hardware mute via enable_pin_
-  // is the definitive fix — it silences the DAC regardless of BCLK state.
-  bool dac_muted_{true};
 
   // Active hardware configuration — tracked so reconfigure helpers can skip
   // redundant disable/enable cycles on consecutive files that match.
