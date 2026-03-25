@@ -13,11 +13,6 @@ CONF_DEFAULT_FILE = "default_file"
 CONF_GAIN         = "gain"
 CONF_ENABLE_PIN   = "enable_pin"
 
-# Declare WaveshareAudio as a speaker::Speaker platform component.
-# Declaring the class HERE (in speaker.py, not __init__.py) is what makes
-# cv.use_id(speaker.Speaker) pass in the mixer platform — ESPHome's type
-# checker requires the class to be registered as a speaker platform, not just
-# a top-level component that happens to inherit Speaker.
 WaveshareAudio = waveshare_audio_ns.class_(
     "WaveshareAudio", cg.Component, speaker.Speaker
 )
@@ -32,14 +27,12 @@ def validate_gpio_num(value):
     return cv.int_range(min=0, max=48)(value)
 
 
-CONFIG_SCHEMA = cv.Schema(
+CONFIG_SCHEMA = speaker.SPEAKER_SCHEMA.extend(
     {
         cv.GenerateID(): cv.declare_id(WaveshareAudio),
         cv.Required(CONF_BCLK_PIN):  validate_gpio_num,
         cv.Required(CONF_WS_PIN):    validate_gpio_num,
         cv.Required(CONF_DOUT_PIN):  validate_gpio_num,
-        # 48000 Hz matches the media_player pipeline format.
-        # Buzz patterns and SD file playback reconfigure the clock automatically.
         cv.Optional(CONF_SAMPLE_RATE,  default=48000):                   cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_DEFAULT_FILE, default="/sdcard/recording.wav"): cv.string,
         cv.Optional(CONF_GAIN,         default=0.25):                    cv.float_range(min=0.0, max=1.0),
@@ -51,6 +44,7 @@ CONFIG_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    await speaker.register_speaker(var, config)  # ← registers metadata the mixer needs
 
     cg.add(var.set_bclk_pin(config[CONF_BCLK_PIN]))
     cg.add(var.set_ws_pin(config[CONF_WS_PIN]))

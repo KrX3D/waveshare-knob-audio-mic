@@ -11,9 +11,6 @@ CONF_PDM_DATA_PIN  = "pdm_data_pin"
 CONF_PATH          = "path"
 CONF_BUFFER_BYTES  = "buffer_bytes"
 
-# Declare WaveshareMic as a microphone::Microphone platform component.
-# Same reason as speaker.py: declaring in the platform file makes
-# cv.use_id(microphone.Microphone) pass in voice_assistant.
 WaveshareMic = waveshare_mic_ns.class_(
     "WaveshareMic", cg.Component, microphone.Microphone
 )
@@ -28,7 +25,7 @@ def validate_gpio_num(value):
     return cv.int_range(min=0, max=48)(value)
 
 
-CONFIG_SCHEMA = cv.Schema(
+CONFIG_SCHEMA = microphone.MICROPHONE_SCHEMA.extend(
     {
         cv.GenerateID(): cv.declare_id(WaveshareMic),
         cv.Required(CONF_PDM_CLOCK_PIN): validate_gpio_num,
@@ -43,6 +40,7 @@ CONFIG_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    await microphone.register_microphone(var, config)  # ← registers metadata voice_assistant needs
 
     cg.add(var.set_pdm_clock_pin(config[CONF_PDM_CLOCK_PIN]))
     cg.add(var.set_pdm_data_pin(config[CONF_PDM_DATA_PIN]))
