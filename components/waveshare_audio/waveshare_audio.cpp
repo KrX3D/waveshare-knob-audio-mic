@@ -21,7 +21,9 @@ static const char *const TAG = "waveshare_audio";
 // ---------------------------------------------------------------------------
 
 void WaveshareAudio::setup() {
-  // Drive PCM5100A route-enable pin HIGH, matching Arduino audio_gpio_init().
+  // Drive PCM5100A XSMT pin HIGH initially so gpio_config records it as an
+  // output, then immediately pull it LOW to assert hardware mute.
+  // The DAC will only be unmuted just before the first playback starts.
   gpio_config_t gpio_conf = {};
   gpio_conf.pull_down_en  = GPIO_PULLDOWN_DISABLE;
   gpio_conf.pull_up_en    = GPIO_PULLUP_ENABLE;
@@ -29,7 +31,8 @@ void WaveshareAudio::setup() {
   gpio_conf.pin_bit_mask  = (1ULL << static_cast<uint32_t>(this->enable_pin_));
   gpio_conf.mode          = GPIO_MODE_OUTPUT;
   gpio_config(&gpio_conf);
-  gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 1);
+  gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 0);  // muted
+  this->dac_muted_ = true;
 
   // Pre-allocate gain-scaling buffer in SPIRAM so write_pcm_() never
   // touches the internal heap allocator at audio rate.
@@ -50,7 +53,7 @@ void WaveshareAudio::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Audio output ready (sample_rate=%u) — channel idle/muted",
+  ESP_LOGI(TAG, "Audio output ready (rate=%u Hz) — DAC muted, channel idle",
            this->sample_rate_);
 }
 
@@ -107,9 +110,19 @@ bool WaveshareAudio::init_i2s_() {
 bool WaveshareAudio::enable_channel_() {
   if (this->channel_enabled_)
     return true;
+  // Unmute the PCM5100A (XSMT HIGH) before starting the I2S clock.
+  // The chip ramps up from mute over ~1034 LRCK cycles (~65 ms at 16 kHz)
+  // so the first moments of audio fade in naturally — no pop.
+  if (this->dac_muted_) {
+    gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 1);
+    this->dac_muted_ = false;
+  }
   esp_err_t err = i2s_channel_enable(this->tx_chan_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(err));
+    // Re-mute if enable failed so we don't leave DAC unmuted with no clock.
+    gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 0);
+    this->dac_muted_ = true;
     return false;
   }
   this->channel_enabled_ = true;
@@ -121,6 +134,12 @@ void WaveshareAudio::disable_channel_() {
     return;
   i2s_channel_disable(this->tx_chan_);
   this->channel_enabled_ = false;
+  // Assert hardware mute AFTER disabling the I2S peripheral.
+  // i2s_channel_disable() can leave BCLK stuck HIGH electrically.
+  // Without this the PCM5100A sees a frozen clock as a "paused bus" and
+  // keeps buzzing.  Driving enable_pin_ LOW silences it unconditionally.
+  gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 0);
+  this->dac_muted_ = true;
 }
 
 // ---------------------------------------------------------------------------
