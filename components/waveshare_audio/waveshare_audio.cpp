@@ -270,7 +270,9 @@ bool WaveshareAudio::write_pcm_(const int16_t *pcm, size_t bytes) {
     return false;
 
   size_t n = std::min(bytes / sizeof(int16_t), SCALE_BUF_SAMPLES);
-  float g  = this->gain_;
+  // Load gain atomically — set_gain() may be called from the main core
+  // while this task runs on the other core.
+  float g = this->gain_.load(std::memory_order_relaxed);
   for (size_t i = 0; i < n; i++)
     this->scale_buf_[i] = static_cast<int16_t>(pcm[i] * g);
 
@@ -540,4 +542,4 @@ void WaveshareAudio::stop() {
 }
 
 }  // namespace waveshare_audio
-}  // namespace esphome
+}  // namespace esphomef

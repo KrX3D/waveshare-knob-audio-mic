@@ -26,7 +26,7 @@ class WaveshareAudio : public Component {
   void set_enable_pin(int pin) { this->enable_pin_ = pin; }
   void set_sample_rate(uint32_t sample_rate) { this->sample_rate_ = sample_rate; }
   void set_default_file(const std::string &path) { this->default_file_ = path; }
-  void set_gain(float gain) { this->gain_ = gain; }
+  void set_gain(float gain) { this->gain_.store(gain, std::memory_order_relaxed); }
 
   bool play_file(const std::string &path = "");
   bool play_buzz(BuzzPattern pattern);
@@ -80,7 +80,11 @@ class WaveshareAudio : public Component {
   int enable_pin_{0};
   uint32_t sample_rate_{16000};
   std::string default_file_{"/sdcard/recording.wav"};
-  float gain_{0.25f};
+  // std::atomic<float> prevents a data race between set_gain() on the main
+  // ESPHome core and write_pcm_() on the FreeRTOS playback task core.
+  // A plain float torn-write mid-playback produces corrupted amplitude values
+  // that sound like random noise bursts or garbled beep patterns.
+  std::atomic<float> gain_{0.25f};
 
   i2s_chan_handle_t tx_chan_{nullptr};
   bool ready_{false};
