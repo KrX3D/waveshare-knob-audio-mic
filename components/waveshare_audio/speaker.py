@@ -12,6 +12,7 @@ CONF_DOUT_PIN     = "dout_pin"
 CONF_DEFAULT_FILE = "default_file"
 CONF_GAIN         = "gain"
 CONF_ENABLE_PIN   = "enable_pin"
+CONF_NUM_CHANNELS = "num_channels"
 
 WaveshareAudio = waveshare_audio_ns.class_(
     "WaveshareAudio", cg.Component, speaker.Speaker
@@ -27,7 +28,7 @@ def validate_gpio_num(value):
     return cv.int_range(min=0, max=48)(value)
 
 
-CONFIG_SCHEMA = speaker.SPEAKER_SCHEMA.extend(
+CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareAudio),
         cv.Required(CONF_BCLK_PIN):  validate_gpio_num,
@@ -37,6 +38,9 @@ CONFIG_SCHEMA = speaker.SPEAKER_SCHEMA.extend(
         cv.Optional(CONF_DEFAULT_FILE, default="/sdcard/recording.wav"): cv.string,
         cv.Optional(CONF_GAIN,         default=0.25):                    cv.float_range(min=0.0, max=1.0),
         cv.Optional(CONF_ENABLE_PIN,   default=0):                       validate_gpio_num,
+        # The mixer reads num_channels from the output speaker's config dict.
+        # It must be present as a string-coercible value — default "2" for stereo.
+        cv.Optional(CONF_NUM_CHANNELS, default="2"):                     cv.string,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -44,7 +48,6 @@ CONFIG_SCHEMA = speaker.SPEAKER_SCHEMA.extend(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    await speaker.register_speaker(var, config)  # ← registers metadata the mixer needs
 
     cg.add(var.set_bclk_pin(config[CONF_BCLK_PIN]))
     cg.add(var.set_ws_pin(config[CONF_WS_PIN]))
