@@ -125,13 +125,16 @@ bool WaveshareAudio::enable_channel_() {
 void WaveshareAudio::disable_channel_() {
   if (!this->channel_enabled_)
     return;
-  // The PCM5100A XSMT pin is not reachable from the ESP32-S3 (it is wired to
-  // the secondary ESP32's GPIO32).  The only way to mute from this side is the
-  // PCM5100A's built-in auto-mute: it engages after 1034 consecutive LRCK
-  // cycles of all-zero data (~65 ms at 16 kHz).
-  // write_silence_(80) gives a comfortable margin before we stop the clock.
-  // Callers must call write_silence_() BEFORE this function to ensure the
-  // auto-mute has engaged.  This function then stops the DMA.
+  // The PCM5100A XSMT (hardware mute) pin is wired to the secondary ESP32's
+  // GPIO38 and is not reachable from the S3.  The only software-accessible
+  // mute path is the PCM5100A's built-in auto-mute: it activates after 1034
+  // consecutive zero-valued LRCK frames (~65 ms at 16 kHz).
+  //
+  // Callers MUST call write_silence_(100) before this function to ensure the
+  // auto-mute has engaged.  Do NOT drive BCLK or DOUT LOW here — the ESP32
+  // I2S driver configures those pins in the GPIO matrix during init_std_mode()
+  // and does NOT re-route them when enable() is called.  Manually taking over
+  // those pins breaks all subsequent playback calls permanently.
   i2s_channel_disable(this->tx_chan_);
   this->channel_enabled_ = false;
 }
@@ -279,6 +282,14 @@ void WaveshareAudio::write_silence_(uint32_t duration_ms) {
     i2s_channel_write(this->tx_chan_, zeros, chunk * sizeof(int16_t),
                       &bytes_written, pdMS_TO_TICKS(20));
     sent += chunk;
+  }
+  // i2s_channel_write() queues data into DMA descriptors but returns before
+  // the hardware has finished transmitting.  Wait one extra DMA-buffer period
+  // so all queued silence frames have been clocked out to the PCM5100A before
+  // the caller disables the channel.  At 16 kHz / 256-sample chunks this is
+  // ~16 ms; 20 ms gives a comfortable margin.
+  if (!this->stop_requested_) {
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
@@ -429,11 +440,13 @@ void WaveshareAudio::playback_task_trampoline_(void *arg) {
   if (!ok && !self->stop_requested_)
     ESP_LOGW(TAG, "Playback ended with error");
 
-  // Write silence for 80 ms — enough for the PCM5100A auto-mute (1034 LRCK
-  // cycles ~= 65 ms at 16 kHz) to engage before we stop the I2S clock.
-  // This is the only way to mute the DAC from the S3 side since XSMT is
-  // wired to the secondary ESP32 and is not accessible from this firmware.
-  self->write_silence_(80);
+  // Write 100 ms of silence so the PCM5100A auto-mute (1034 LRCK cycles
+  // = ~65 ms at 16 kHz) has time to engage before we stop the I2S clock.
+  // write_silence_() also waits an extra 20 ms after the DMA write returns
+  // to ensure all queued frames have been fully transmitted.
+  // This is the only software-accessible mute path from the S3 — XSMT is
+  // wired to the secondary ESP32 and cannot be controlled from this firmware.
+  self->write_silence_(100);
   self->disable_channel_();
 
   // IMPORTANT: null playback_task_ BEFORE vTaskDelete(nullptr) to avoid the
