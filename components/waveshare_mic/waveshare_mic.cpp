@@ -23,7 +23,6 @@ void WaveshareMic::setup() {
   }
 
   if (!this->init_i2s_()) {
-    // Free buffer here; without this guard it leaks when I2S init fails.
     heap_caps_free(this->buffer_);
     this->buffer_ = nullptr;
     this->mark_failed();
@@ -35,17 +34,32 @@ void WaveshareMic::setup() {
 }
 
 // ============================================================
-// loop
+// loop — runs both SD recording and Microphone callback dispatch
 // ============================================================
 
 void WaveshareMic::loop() {
-  if (!this->recording_ || !this->i2s_ready_ || !this->record_file_) return;
+  if (!this->i2s_ready_) return;
 
+  // Nothing to do if neither SD recording nor Microphone interface is active.
+  bool mic_active = (this->state == microphone::State::RUNNING);
+  if (!this->recording_ && !mic_active) return;
+
+  // Read one buffer from I2S.  Use a short timeout so we don't block the
+  // main loop for more than a few milliseconds.
   size_t    bytes_read = 0;
   esp_err_t err = i2s_channel_read(this->rx_chan_, this->buffer_,
                                     this->buffer_bytes_, &bytes_read,
-                                    pdMS_TO_TICKS(20));
-  if (err == ESP_OK && bytes_read > 0) {
+                                    pdMS_TO_TICKS(5));
+
+  if (err == ESP_ERR_TIMEOUT || bytes_read == 0) return;
+
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "i2s_channel_read: %s", esp_err_to_name(err));
+    return;
+  }
+
+  // ── SD recording path ──────────────────────────────────────────────────
+  if (this->recording_ && this->record_file_) {
     size_t written = fwrite(this->buffer_, 1, bytes_read, this->record_file_);
     this->bytes_written_ += written;
     if (written != bytes_read) {
@@ -53,17 +67,66 @@ void WaveshareMic::loop() {
       this->stop_recording();
       return;
     }
-  } else if (err != ESP_ERR_TIMEOUT) {
-    ESP_LOGW(TAG, "i2s_channel_read: %s", esp_err_to_name(err));
+
+    uint32_t now = millis();
+    if (now - this->last_stats_log_ms_ > 5000) {
+      this->last_stats_log_ms_ = now;
+      ESP_LOGI(TAG, "Recording %s: %u ms, %u bytes",
+               this->current_path_.c_str(), now - this->start_ms_,
+               this->bytes_written_);
+    }
   }
 
-  uint32_t now = millis();
-  if (now - this->last_stats_log_ms_ > 5000) {
-    this->last_stats_log_ms_ = now;
-    ESP_LOGI(TAG, "Recording %s: %u ms, %u bytes",
-             this->current_path_.c_str(), now - this->start_ms_,
-             this->bytes_written_);
+  // ── Microphone callback path (voice_assistant / on_data) ───────────────
+  if (mic_active) {
+    size_t samples = bytes_read / sizeof(int16_t);
+    // Build a vector from the shared buffer and dispatch to all callbacks.
+    // Each callback gets its own copy so downstream processing is independent.
+    std::vector<int16_t> data(this->buffer_, this->buffer_ + samples);
+    this->data_callbacks_.call(data);
   }
+}
+
+// ============================================================
+// Microphone interface — start / stop / read
+// ============================================================
+
+void WaveshareMic::start() {
+  if (!this->i2s_ready_) {
+    ESP_LOGW(TAG, "start() called but I2S not ready");
+    return;
+  }
+  if (this->state == microphone::State::RUNNING) return;
+
+  // Flush stale PDM data accumulated while idle.
+  i2s_channel_disable(this->rx_chan_);
+  i2s_channel_enable(this->rx_chan_);
+
+  this->state = microphone::State::RUNNING;
+  ESP_LOGD(TAG, "Microphone started");
+}
+
+void WaveshareMic::stop() {
+  if (this->state == microphone::State::STOPPED) return;
+  // Only mark STOPPED for the Microphone interface.  SD recording continues
+  // independently — we do not disable the I2S channel here because
+  // start_recording() may still be active.
+  this->state = microphone::State::STOPPED;
+  ESP_LOGD(TAG, "Microphone stopped");
+}
+
+size_t WaveshareMic::read(int16_t *buf, size_t len) {
+  if (!this->i2s_ready_) return 0;
+  if (this->state != microphone::State::RUNNING) return 0;
+
+  size_t    bytes_read = 0;
+  esp_err_t err = i2s_channel_read(this->rx_chan_, buf,
+                                    len * sizeof(int16_t),
+                                    &bytes_read, pdMS_TO_TICKS(10));
+  if (err != ESP_OK && err != ESP_ERR_TIMEOUT)
+    ESP_LOGW(TAG, "read(): %s", esp_err_to_name(err));
+
+  return bytes_read / sizeof(int16_t);
 }
 
 // ============================================================
@@ -112,10 +175,7 @@ bool WaveshareMic::init_i2s_() {
 
 bool WaveshareMic::open_file_(const std::string &path) {
   this->record_file_ = fopen(path.c_str(), "wb");
-  if (!this->record_file_) {
-    ESP_LOGE(TAG, "Cannot open: %s", path.c_str());
-    return false;
-  }
+  if (!this->record_file_) { ESP_LOGE(TAG, "Cannot open: %s", path.c_str()); return false; }
   return true;
 }
 
@@ -132,57 +192,41 @@ void WaveshareMic::close_file_() {
 // ============================================================
 
 bool WaveshareMic::write_wav_header_placeholder_() {
-  // Standard 44-byte PCM WAV header with zeroed size fields.
-  // sample_rate and data_size are patched by finalize_wav_header_().
   const uint8_t h[44] = {
-    'R','I','F','F', 0,0,0,0,     // ChunkID + ChunkSize (patched)
-    'W','A','V','E',               // Format
-    'f','m','t',' ', 16,0,0,0,    // Subchunk1ID + Subchunk1Size=16
-    1,0,                           // AudioFormat=1 (PCM)
-    1,0,                           // NumChannels=1 (mono)
-    0,0,0,0,                       // SampleRate      (patched)
-    0,0,0,0,                       // ByteRate        (patched)
-    2,0,                           // BlockAlign=2
-    16,0,                          // BitsPerSample=16
-    'd','a','t','a', 0,0,0,0,     // Subchunk2ID + Subchunk2Size (patched)
+    'R','I','F','F', 0,0,0,0,
+    'W','A','V','E',
+    'f','m','t',' ', 16,0,0,0,
+    1,0,
+    1,0,
+    0,0,0,0,
+    0,0,0,0,
+    2,0,
+    16,0,
+    'd','a','t','a', 0,0,0,0,
   };
   return fwrite(h, 1, sizeof(h), this->record_file_) == sizeof(h);
 }
 
 void WaveshareMic::finalize_wav_header_() {
   if (!this->record_file_) return;
-
   uint32_t data_size = this->bytes_written_;
   uint32_t riff_size = data_size + 36;
-  uint32_t byte_rate = this->sample_rate_ * 2;  // 1 ch × 2 bytes/sample
-
-  fseek(this->record_file_, 4,  SEEK_SET);
-  fwrite(&riff_size,          1, sizeof(riff_size),         this->record_file_);
-  fseek(this->record_file_, 24, SEEK_SET);
-  fwrite(&this->sample_rate_, 1, sizeof(this->sample_rate_), this->record_file_);
-  fwrite(&byte_rate,          1, sizeof(byte_rate),          this->record_file_);
-  fseek(this->record_file_, 40, SEEK_SET);
-  fwrite(&data_size,          1, sizeof(data_size),          this->record_file_);
+  uint32_t byte_rate = this->sample_rate_ * 2;
+  fseek(this->record_file_, 4,  SEEK_SET); fwrite(&riff_size,          1, 4, this->record_file_);
+  fseek(this->record_file_, 24, SEEK_SET); fwrite(&this->sample_rate_, 1, 4, this->record_file_);
+                                            fwrite(&byte_rate,          1, 4, this->record_file_);
+  fseek(this->record_file_, 40, SEEK_SET); fwrite(&data_size,          1, 4, this->record_file_);
 }
 
 // ============================================================
-// Public API
+// SD recording API
 // ============================================================
 
 bool WaveshareMic::start_recording(const std::string &path) {
-  if (!this->i2s_ready_) {
-    ESP_LOGW(TAG, "Mic not ready");
-    return false;
-  }
-  if (this->recording_) {
-    ESP_LOGW(TAG, "Already recording");
-    return true;
-  }
+  if (!this->i2s_ready_) { ESP_LOGW(TAG, "Mic not ready"); return false; }
+  if (this->recording_)  { ESP_LOGW(TAG, "Already recording"); return true; }
 
-  // Resolve path without mutating default_path_, so the YAML-configured
-  // default is always available for future calls.
   this->current_path_ = path.empty() ? this->default_path_ : path;
-
   if (!this->open_file_(this->current_path_)) return false;
   if (!this->write_wav_header_placeholder_()) {
     ESP_LOGE(TAG, "WAV header write failed: %s", this->current_path_.c_str());
@@ -190,36 +234,35 @@ bool WaveshareMic::start_recording(const std::string &path) {
     return false;
   }
 
-  // Flush stale PDM DMA data accumulated while the channel was idle.
-  // Without this the first buffer-worth of audio may contain pre-recording
-  // noise captured since the channel was last enabled.
+  // Flush stale PDM DMA data.
   i2s_channel_disable(this->rx_chan_);
   i2s_channel_enable(this->rx_chan_);
+
+  // Also restart the Microphone interface so callbacks see clean data.
+  if (this->state == microphone::State::RUNNING) {
+    this->state = microphone::State::RUNNING;  // already running, no change needed
+  }
 
   this->bytes_written_     = 0;
   this->start_ms_          = millis();
   this->last_stats_log_ms_ = this->start_ms_;
   this->recording_         = true;
 
-  ESP_LOGI(TAG, "Recording -> %s (rate=%u Hz)",
-           this->current_path_.c_str(), this->sample_rate_);
+  ESP_LOGI(TAG, "Recording -> %s (rate=%u Hz)", this->current_path_.c_str(), this->sample_rate_);
   return true;
 }
 
 void WaveshareMic::stop_recording() {
   if (!this->recording_) return;
-
   this->last_recording_ms_ = millis() - this->start_ms_;
   this->recording_         = false;
   this->finalize_wav_header_();
   this->close_file_();
 
-  if (this->bytes_written_ == 0) {
+  if (this->bytes_written_ == 0)
     ESP_LOGW(TAG, "Stopped (%u ms) — 0 bytes captured", this->last_recording_ms_);
-  } else {
-    ESP_LOGI(TAG, "Stopped (%u ms, %u bytes)", this->last_recording_ms_,
-             this->bytes_written_);
-  }
+  else
+    ESP_LOGI(TAG, "Stopped (%u ms, %u bytes)", this->last_recording_ms_, this->bytes_written_);
 }
 
 uint32_t WaveshareMic::recording_ms() const {

@@ -1,8 +1,9 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_SAMPLE_RATE
+from esphome.components import microphone
 
-DEPENDENCIES = []
+DEPENDENCIES = ["microphone"]
 CODEOWNERS = ["@KrX3D"]
 
 CONF_PDM_CLOCK_PIN = "pdm_clock_pin"
@@ -11,7 +12,12 @@ CONF_PATH          = "path"
 CONF_BUFFER_BYTES  = "buffer_bytes"
 
 waveshare_mic_ns = cg.esphome_ns.namespace("waveshare_mic")
-WaveshareMic = waveshare_mic_ns.class_("WaveshareMic", cg.Component)
+
+# Declare as both Component and Microphone so it can be referenced wherever a
+# microphone::Microphone is expected (voice_assistant, on_data actions, etc.).
+WaveshareMic = waveshare_mic_ns.class_(
+    "WaveshareMic", cg.Component, microphone.Microphone
+)
 
 
 def validate_gpio_num(value):
@@ -26,14 +32,8 @@ def validate_gpio_num(value):
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(WaveshareMic),
-        # Pins are Required: 45/46 are Waveshare-specific — there are no
-        # universal defaults across board revisions, so they must be explicit.
         cv.Required(CONF_PDM_CLOCK_PIN): validate_gpio_num,
         cv.Required(CONF_PDM_DATA_PIN):  validate_gpio_num,
-        # 16000 Hz default: 160 000 000 / 16 000 = 10 000 exactly.
-        # This gives a perfect PLL divider with zero rounding error, so the
-        # TX and PDM-RX clocks always agree and playback is not sped up.
-        # 44100 Hz does NOT divide evenly and causes the fast-playback bug.
         cv.Optional(CONF_SAMPLE_RATE, default=16000): cv.int_range(min=8000, max=48000),
         cv.Optional(CONF_PATH,         default="/sdcard/recording.wav"): cv.string,
         cv.Optional(CONF_BUFFER_BYTES, default=4096): cv.int_range(min=1024, max=16384),
