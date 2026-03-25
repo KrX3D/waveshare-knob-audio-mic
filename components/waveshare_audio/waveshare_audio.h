@@ -105,6 +105,15 @@ class WaveshareAudio : public Component {
   int16_t *scale_buf_{nullptr};
   static constexpr size_t SCALE_BUF_SAMPLES = 2048;
 
+  // Pre-allocated SPIRAM read buffer for play_file_blocking_().
+  // 16 KB = 8192 samples = ~512 ms at 16 kHz mono.  A large block reduces
+  // how often we call fread(), which is the primary cause of I2S DMA underrun:
+  // FAT32 SD reads have variable latency (cluster boundary, FAT lookup, SD bus
+  // arbitration with the display) and a small read block causes the DMA to
+  // starve whenever a read takes longer than the DMA buffer depth.
+  int16_t *read_buf_{nullptr};
+  static constexpr size_t READ_BUF_SAMPLES = 8192;  // 16 KB
+
   enum PlaybackMode : uint8_t {
     PLAYBACK_NONE = 0,
     PLAYBACK_FILE = 1,

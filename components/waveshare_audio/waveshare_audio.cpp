@@ -37,19 +37,35 @@ void WaveshareAudio::setup() {
   gpio_config(&gpio_conf);
   gpio_set_level(static_cast<gpio_num_t>(this->enable_pin_), 1);  // route S3 -> DAC
 
-  // Pre-allocate gain-scaling buffer in SPIRAM so write_pcm_() never
-  // touches the internal heap allocator at audio rate.
+  // Pre-allocate both SPIRAM buffers before I2S init.
   this->scale_buf_ = static_cast<int16_t *>(
       heap_caps_malloc(SCALE_BUF_SAMPLES * sizeof(int16_t),
                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (this->scale_buf_ == nullptr) {
+  if (!this->scale_buf_) {
     ESP_LOGE(TAG, "Failed to allocate scale buffer (%u bytes)",
              static_cast<unsigned>(SCALE_BUF_SAMPLES * sizeof(int16_t)));
     this->mark_failed();
     return;
   }
 
+  // 16 KB SPIRAM read buffer for play_file_blocking_().  Larger blocks mean
+  // fewer fread() calls, giving the SD card more time between reads and
+  // eliminating the DMA underrun that causes buzzing during playback.
+  this->read_buf_ = static_cast<int16_t *>(
+      heap_caps_malloc(READ_BUF_SAMPLES * sizeof(int16_t),
+                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!this->read_buf_) {
+    ESP_LOGE(TAG, "Failed to allocate read buffer (%u bytes)",
+             static_cast<unsigned>(READ_BUF_SAMPLES * sizeof(int16_t)));
+    heap_caps_free(this->scale_buf_);
+    this->scale_buf_ = nullptr;
+    this->mark_failed();
+    return;
+  }
+
   if (!this->init_i2s_()) {
+    heap_caps_free(this->read_buf_);
+    this->read_buf_ = nullptr;
     heap_caps_free(this->scale_buf_);
     this->scale_buf_ = nullptr;
     this->mark_failed();
@@ -66,6 +82,12 @@ void WaveshareAudio::setup() {
 
 bool WaveshareAudio::init_i2s_() {
   i2s_chan_config_t tx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+  // Increase DMA buffering to reduce underrun risk from SD card read latency.
+  // Default is dma_desc_num=6, dma_frame_num=240 (~90 ms at 16 kHz).
+  // 8 descriptors × 1024 frames × 2 bytes = 16 KB = ~512 ms at 16 kHz mono.
+  // This gives the SD reader much more time to return before the DMA starves.
+  tx_chan_cfg.dma_desc_num  = 8;
+  tx_chan_cfg.dma_frame_num = 1024;
   esp_err_t err = i2s_new_channel(&tx_chan_cfg, &this->tx_chan_, nullptr);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "i2s_new_channel failed: %s", esp_err_to_name(err));
@@ -342,14 +364,16 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
     return false;
   }
 
-  int16_t block[1024];
+  // Use the pre-allocated 16 KB SPIRAM read buffer.  Reading large chunks
+  // dramatically reduces fread() call frequency, preventing DMA underrun
+  // when the SD card stalls on cluster/FAT boundaries.
   bool ok = true;
-
   while (!this->stop_requested_) {
-    size_t read = fread(block, 1, sizeof(block), fp);
+    size_t read = fread(this->read_buf_, 1,
+                        READ_BUF_SAMPLES * sizeof(int16_t), fp);
     if (read == 0)
       break;
-    if (!this->write_pcm_(block, read)) {
+    if (!this->write_pcm_(this->read_buf_, read)) {
       ok = false;
       break;
     }
