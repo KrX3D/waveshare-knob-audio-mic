@@ -38,9 +38,10 @@ void WaveshareMic::loop() {
   size_t    bytes_read = 0;
   esp_err_t err = i2s_channel_read(this->rx_chan_, this->buffer_,
                                     this->buffer_bytes_, &bytes_read,
-                                    pdMS_TO_TICKS(5));
+                                    pdMS_TO_TICKS(200));
 
-  if (err == ESP_ERR_TIMEOUT || bytes_read == 0) return;
+  if (err == ESP_ERR_TIMEOUT) return;
+  if (bytes_read == 0) return;
 
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "i2s_channel_read: %s", esp_err_to_name(err));
