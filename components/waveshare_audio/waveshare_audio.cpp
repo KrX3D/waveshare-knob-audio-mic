@@ -223,6 +223,10 @@ bool WaveshareAudio::reconfigure_clock_if_needed_(uint32_t target_rate) {
   ESP_LOGI(TAG, "Clock %u -> %u Hz", this->current_sample_rate_, target_rate);
   bool was_enabled = this->channel_enabled_;
   this->disable_channel_();
+  // ESP-IDF 5.x needs a short settle after disable before reconfiguring clock.
+  // Without this delay the reconfig call may silently have no effect, causing
+  // the hardware to remain at the old rate and audio to play at the wrong speed.
+  vTaskDelay(pdMS_TO_TICKS(10));
   i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(target_rate);
   esp_err_t err = i2s_channel_reconfig_std_clock(this->tx_chan_, &clk);
   if (err != ESP_OK) {
