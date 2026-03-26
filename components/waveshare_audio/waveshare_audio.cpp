@@ -115,7 +115,7 @@ bool WaveshareAudio::init_i2s_() {
 
 void WaveshareAudio::start() {
   if (!this->ready_) return;
-  if (this->state == speaker::STATE_RUNNING) return;
+  if (this->state_ == speaker::STATE_RUNNING) return;
 
   // Reject if a file/buzz task is active.  The caller should wait or cancel.
   if (this->playback_task_ != nullptr) {
@@ -129,25 +129,25 @@ void WaveshareAudio::start() {
   if (!this->reconfigure_slot_if_needed_(2)) return;
   if (!this->enable_channel_()) return;
 
-  this->state = speaker::STATE_RUNNING;
+  this->state_ = speaker::STATE_RUNNING;
   ESP_LOGD(TAG, "Speaker started (%u Hz stereo)", this->sample_rate_);
 }
 
 void WaveshareAudio::finish() {
   // finish() is called when the upstream buffer is empty (clean end-of-stream).
   // Write silence so the PCM5100A auto-mute engages, then disable the channel.
-  if (this->state != speaker::STATE_RUNNING) return;
+  if (this->state_ != speaker::STATE_RUNNING) return;
   this->write_silence_(100);
   this->disable_channel_();
-  this->state = speaker::STATE_STOPPED;
+  this->state_ = speaker::STATE_STOPPED;
   ESP_LOGD(TAG, "Speaker finished");
 }
 
 void WaveshareAudio::stop() {
-  if (this->state == speaker::STATE_STOPPED) return;
+  if (this->state_ == speaker::STATE_STOPPED) return;
   this->write_silence_(30);
   this->disable_channel_();
-  this->state = speaker::STATE_STOPPED;
+  this->state_ = speaker::STATE_STOPPED;
   ESP_LOGD(TAG, "Speaker stopped");
 }
 
@@ -161,7 +161,7 @@ size_t WaveshareAudio::play(const uint8_t *data, size_t length,
     if (!this->reconfigure_clock_if_needed_(this->sample_rate_)) return 0;
     if (!this->reconfigure_slot_if_needed_(2)) return 0;
     if (!this->enable_channel_()) return 0;
-    this->state = speaker::STATE_RUNNING;
+    this->state_ = speaker::STATE_RUNNING;
   }
 
   const int16_t *src = reinterpret_cast<const int16_t *>(data);
@@ -426,7 +426,7 @@ void WaveshareAudio::playback_task_trampoline_(void *arg) {
 
   // After file/buzz playback ends, restore Speaker to STOPPED so the media
   // pipeline can call start() again cleanly.
-  self->state = speaker::STATE_STOPPED;
+  self->state_ = speaker::STATE_STOPPED;
 
   self->stop_requested_ = false;
   self->playback_mode_  = PLAYBACK_NONE;
@@ -441,7 +441,7 @@ void WaveshareAudio::playback_task_trampoline_(void *arg) {
 bool WaveshareAudio::play_file(const std::string &path) {
   if (!this->ready_) return false;
   // Reject if the Speaker streaming interface is active.
-  if (this->state == speaker::STATE_RUNNING) {
+  if (this->state_ == speaker::STATE_RUNNING) {
     ESP_LOGW(TAG, "play_file() blocked — Speaker streaming active; call stop() first");
     return false;
   }
@@ -461,7 +461,7 @@ bool WaveshareAudio::play_file(const std::string &path) {
 
 bool WaveshareAudio::play_buzz(BuzzPattern pattern) {
   if (!this->ready_) return false;
-  if (this->state == speaker::STATE_RUNNING) {
+  if (this->state_ == speaker::STATE_RUNNING) {
     ESP_LOGW(TAG, "play_buzz() blocked — Speaker streaming active; call stop() first");
     return false;
   }
@@ -486,7 +486,7 @@ void WaveshareAudio::stop_playback() {
     this->write_silence_(30);
     this->disable_channel_();
   }
-  this->state = speaker::STATE_STOPPED;
+  this->state_ = speaker::STATE_STOPPED;
 }
 
 }  // namespace waveshare_audio

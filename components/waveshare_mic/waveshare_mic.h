@@ -11,48 +11,25 @@
 namespace esphome {
 namespace waveshare_mic {
 
-// WaveshareMic implements both esphome::Component (setup/loop lifecycle)
-// and esphome::microphone::Microphone so it can be used directly in
-// voice_assistant, on_data callbacks, etc.
-//
-// Two capture modes co-exist:
-//   1. SD recording  — start_recording() / stop_recording().  Audio is
-//      written to a WAV file on the SD card.
-//   2. Microphone interface — start() / stop() from the voice_assistant or
-//      any component that references this as a Microphone.  Audio is
-//      delivered via the data_callbacks_ (push) and read() (poll).
-//
-// Both modes can run simultaneously: when both are active, the audio
-// captured in each loop() tick is written to the SD file AND dispatched
-// to the callbacks.
-
 class WaveshareMic : public Component, public microphone::Microphone {
  public:
   void setup() override;
   void loop()  override;
   float get_setup_priority() const override { return setup_priority::HARDWARE; }
 
-  // ---------------------------------------------------------- setters (YAML)
   void set_pdm_clock_pin(int pin)             { this->pdm_clock_pin_ = pin;   }
   void set_pdm_data_pin(int pin)              { this->pdm_data_pin_  = pin;   }
   void set_sample_rate(uint32_t sr)           { this->sample_rate_   = sr;    }
   void set_default_path(const std::string &p) { this->default_path_  = p;     }
   void set_buffer_bytes(size_t b)             { this->buffer_bytes_  = b;     }
 
-  // ----------------------------------------------- Microphone interface (ESPHome)
-  // start() enables the microphone for the voice_assistant / on_data path.
-  // Flushes stale PDM DMA data so the first buffer is clean.
+  // Microphone interface
   void start() override;
+  void stop()  override;
+  // NOTE: read(int16_t*, size_t) does not exist in ESPHome 2026.3 Microphone base.
+  // Audio delivery is callback-only via data_callbacks_.
 
-  // stop() disables the microphone interface path.  Does NOT stop SD recording
-  // if start_recording() is also active.
-  void stop() override;
-
-  // Synchronous read — returns number of int16_t samples written to buf.
-  // Called by voice_assistant in its processing task.
-  size_t read(int16_t *buf, size_t len) override;
-
-  // --------------------------------------------------- SD recording API
+  // SD recording API
   bool     start_recording(const std::string &path = "");
   void     stop_recording();
   bool     is_recording() const { return this->recording_; }

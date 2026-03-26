@@ -8,10 +8,6 @@ namespace waveshare_mic {
 
 static const char *const TAG = "waveshare_mic";
 
-// ============================================================
-// setup
-// ============================================================
-
 void WaveshareMic::setup() {
   this->buffer_ = static_cast<int16_t *>(
       heap_caps_malloc(this->buffer_bytes_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -33,19 +29,12 @@ void WaveshareMic::setup() {
            this->sample_rate_, this->default_path_.c_str());
 }
 
-// ============================================================
-// loop — runs both SD recording and Microphone callback dispatch
-// ============================================================
-
 void WaveshareMic::loop() {
   if (!this->i2s_ready_) return;
 
-  // Nothing to do if neither SD recording nor Microphone interface is active.
-  bool mic_active = (this->state == microphone::State::RUNNING);
+  bool mic_active = (this->state_ == microphone::STATE_RUNNING);
   if (!this->recording_ && !mic_active) return;
 
-  // Read one buffer from I2S.  Use a short timeout so we don't block the
-  // main loop for more than a few milliseconds.
   size_t    bytes_read = 0;
   esp_err_t err = i2s_channel_read(this->rx_chan_, this->buffer_,
                                     this->buffer_bytes_, &bytes_read,
@@ -58,7 +47,7 @@ void WaveshareMic::loop() {
     return;
   }
 
-  // ── SD recording path ──────────────────────────────────────────────────
+  // SD recording path
   if (this->recording_ && this->record_file_) {
     size_t written = fwrite(this->buffer_, 1, bytes_read, this->record_file_);
     this->bytes_written_ += written;
@@ -77,61 +66,37 @@ void WaveshareMic::loop() {
     }
   }
 
-  // ── Microphone callback path (voice_assistant / on_data) ───────────────
+  // Microphone callback path (voice_assistant / on_data)
+  // data_callbacks_ expects const std::vector<uint8_t>& — pass raw bytes.
   if (mic_active) {
-    size_t samples = bytes_read / sizeof(int16_t);
-    // Build a vector from the shared buffer and dispatch to all callbacks.
-    // Each callback gets its own copy so downstream processing is independent.
-    std::vector<int16_t> data(this->buffer_, this->buffer_ + samples);
+    std::vector<uint8_t> data(
+        reinterpret_cast<uint8_t *>(this->buffer_),
+        reinterpret_cast<uint8_t *>(this->buffer_) + bytes_read);
     this->data_callbacks_.call(data);
   }
 }
-
-// ============================================================
-// Microphone interface — start / stop / read
-// ============================================================
 
 void WaveshareMic::start() {
   if (!this->i2s_ready_) {
     ESP_LOGW(TAG, "start() called but I2S not ready");
     return;
   }
-  if (this->state == microphone::State::RUNNING) return;
+  if (this->state_ == microphone::STATE_RUNNING) return;
 
-  // Flush stale PDM data accumulated while idle.
+  // Flush stale PDM DMA data accumulated while idle.
   i2s_channel_disable(this->rx_chan_);
   i2s_channel_enable(this->rx_chan_);
 
-  this->state = microphone::State::RUNNING;
+  this->state_ = microphone::STATE_RUNNING;
   ESP_LOGD(TAG, "Microphone started");
 }
 
 void WaveshareMic::stop() {
-  if (this->state == microphone::State::STOPPED) return;
-  // Only mark STOPPED for the Microphone interface.  SD recording continues
-  // independently — we do not disable the I2S channel here because
-  // start_recording() may still be active.
-  this->state = microphone::State::STOPPED;
+  if (this->state_ == microphone::STATE_STOPPED) return;
+  // Don't disable I2S here — SD recording may still be active.
+  this->state_ = microphone::STATE_STOPPED;
   ESP_LOGD(TAG, "Microphone stopped");
 }
-
-size_t WaveshareMic::read(int16_t *buf, size_t len) {
-  if (!this->i2s_ready_) return 0;
-  if (this->state != microphone::State::RUNNING) return 0;
-
-  size_t    bytes_read = 0;
-  esp_err_t err = i2s_channel_read(this->rx_chan_, buf,
-                                    len * sizeof(int16_t),
-                                    &bytes_read, pdMS_TO_TICKS(10));
-  if (err != ESP_OK && err != ESP_ERR_TIMEOUT)
-    ESP_LOGW(TAG, "read(): %s", esp_err_to_name(err));
-
-  return bytes_read / sizeof(int16_t);
-}
-
-// ============================================================
-// I2S PDM init
-// ============================================================
 
 bool WaveshareMic::init_i2s_() {
   i2s_chan_config_t rx_chan_cfg =
@@ -169,10 +134,6 @@ bool WaveshareMic::init_i2s_() {
   return true;
 }
 
-// ============================================================
-// File helpers
-// ============================================================
-
 bool WaveshareMic::open_file_(const std::string &path) {
   this->record_file_ = fopen(path.c_str(), "wb");
   if (!this->record_file_) { ESP_LOGE(TAG, "Cannot open: %s", path.c_str()); return false; }
@@ -187,21 +148,14 @@ void WaveshareMic::close_file_() {
   }
 }
 
-// ============================================================
-// WAV header
-// ============================================================
-
 bool WaveshareMic::write_wav_header_placeholder_() {
   const uint8_t h[44] = {
     'R','I','F','F', 0,0,0,0,
     'W','A','V','E',
     'f','m','t',' ', 16,0,0,0,
-    1,0,
-    1,0,
-    0,0,0,0,
-    0,0,0,0,
-    2,0,
-    16,0,
+    1,0, 1,0,
+    0,0,0,0, 0,0,0,0,
+    2,0, 16,0,
     'd','a','t','a', 0,0,0,0,
   };
   return fwrite(h, 1, sizeof(h), this->record_file_) == sizeof(h);
@@ -218,10 +172,6 @@ void WaveshareMic::finalize_wav_header_() {
   fseek(this->record_file_, 40, SEEK_SET); fwrite(&data_size,          1, 4, this->record_file_);
 }
 
-// ============================================================
-// SD recording API
-// ============================================================
-
 bool WaveshareMic::start_recording(const std::string &path) {
   if (!this->i2s_ready_) { ESP_LOGW(TAG, "Mic not ready"); return false; }
   if (this->recording_)  { ESP_LOGW(TAG, "Already recording"); return true; }
@@ -237,11 +187,6 @@ bool WaveshareMic::start_recording(const std::string &path) {
   // Flush stale PDM DMA data.
   i2s_channel_disable(this->rx_chan_);
   i2s_channel_enable(this->rx_chan_);
-
-  // Also restart the Microphone interface so callbacks see clean data.
-  if (this->state == microphone::State::RUNNING) {
-    this->state = microphone::State::RUNNING;  // already running, no change needed
-  }
 
   this->bytes_written_     = 0;
   this->start_ms_          = millis();
