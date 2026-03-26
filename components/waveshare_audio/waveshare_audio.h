@@ -59,7 +59,7 @@ class WaveshareAudio : public Component, public speaker::Speaker {
   // Called repeatedly by the mixer / media pipeline with raw PCM-16 bytes.
   // Returns the number of bytes actually consumed.  May be less than length
   // if the I2S DMA is momentarily full.
-  size_t play(const uint8_t *data, size_t length, TickType_t ticks_to_wait) override;
+  size_t play(const uint8_t *data, size_t length) override;
 
   // Returns true while there is audio queued in the DMA ring buffer.
   bool has_buffered_data() const override;

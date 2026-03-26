@@ -151,8 +151,7 @@ void WaveshareAudio::stop() {
   ESP_LOGD(TAG, "Speaker stopped");
 }
 
-size_t WaveshareAudio::play(const uint8_t *data, size_t length,
-                             TickType_t ticks_to_wait) {
+size_t WaveshareAudio::play(const uint8_t *data, size_t length) {
   if (!this->ready_) return 0;
 
   // Auto-start if the channel is not yet enabled (e.g. first call without
@@ -179,7 +178,7 @@ size_t WaveshareAudio::play(const uint8_t *data, size_t length,
     size_t chunk_bytes    = chunk_samples * sizeof(int16_t);
     size_t just_written   = 0;
     esp_err_t err = i2s_channel_write(this->tx_chan_, this->scale_buf_,
-                                       chunk_bytes, &just_written, ticks_to_wait);
+                                       chunk_bytes, &just_written, pdMS_TO_TICKS(100));
     if (err != ESP_OK || just_written == 0)
       break;
     written_bytes += just_written;
