@@ -41,13 +41,14 @@ CONFIG_SCHEMA = cv.Schema(
         # The mixer platform's FINAL_VALIDATE_SCHEMA does
         #   inherit_property_from(CONF_NUM_CHANNELS,    CONF_OUTPUT_SPEAKER)
         #   inherit_property_from(CONF_BITS_PER_SAMPLE, CONF_OUTPUT_SPEAKER)
-        # so BOTH keys must exist in this speaker's config dict. If either is
-        # missing the inherit yields None and validation fails with
-        # "The <key> Must be string, got <class 'NoneType'>".
-        # Values use the same spelling as the built-in i2s_audio speaker,
-        # which declares default_bits_per_sample="16bit".
-        cv.Optional(CONF_NUM_CHANNELS,    default="2"):     cv.string,
-        cv.Optional(CONF_BITS_PER_SAMPLE, default="16bit"): cv.string,
+        # and then hands both to audio.final_validate_audio_schema(), which
+        # applies cv.int_range() to each. So both keys must exist AND must be
+        # integers -- the "16bit" spelling used by the i2s_audio YAML schema is
+        # converted before it ever reaches the mixer, so it cannot be used here.
+        # 16 matches the C++ side, which is PCM-16 throughout (write_pcm_ takes
+        # int16_t, scale_buf_ is int16_t).
+        cv.Optional(CONF_NUM_CHANNELS,    default=2):  cv.int_range(min=1, max=2),
+        cv.Optional(CONF_BITS_PER_SAMPLE, default=16): cv.int_range(min=8, max=32),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
