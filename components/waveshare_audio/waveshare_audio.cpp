@@ -61,7 +61,7 @@ void WaveshareAudio::setup() {
     return;
   }
 
-  ESP_LOGI(TAG, "Audio ready (rate=%u Hz)", this->sample_rate_);
+  ESP_LOGI(TAG, "Audio ready (rate=%u Hz)", static_cast<unsigned>(this->sample_rate_));
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ void WaveshareAudio::start() {
   if (!this->enable_channel_()) return;
 
   this->state_ = speaker::STATE_RUNNING;
-  ESP_LOGD(TAG, "Speaker started (%u Hz stereo)", this->sample_rate_);
+  ESP_LOGD(TAG, "Speaker started (%u Hz stereo)", static_cast<unsigned>(this->sample_rate_));
 }
 
 void WaveshareAudio::finish() {
@@ -220,7 +220,8 @@ void WaveshareAudio::disable_channel_() {
 
 bool WaveshareAudio::reconfigure_clock_if_needed_(uint32_t target_rate) {
   if (target_rate == this->current_sample_rate_) return true;
-  ESP_LOGI(TAG, "Clock %u -> %u Hz", this->current_sample_rate_, target_rate);
+  ESP_LOGI(TAG, "Clock %u -> %u Hz", static_cast<unsigned>(this->current_sample_rate_),
+           static_cast<unsigned>(target_rate));
   bool was_enabled = this->channel_enabled_;
   this->disable_channel_();
   // ESP-IDF 5.x needs a short settle after disable before reconfiguring clock.
@@ -279,7 +280,8 @@ WaveshareAudio::WavHeader WaveshareAudio::read_wav_header_(FILE *fp) {
                hdr.sample_rate >= 8000 && hdr.sample_rate <= 48000);
   if (!hdr.valid)
     ESP_LOGW(TAG, "Unsupported WAV: %u ch, %u-bit, %u Hz — using defaults",
-             hdr.num_channels, hdr.bits_per_sample, hdr.sample_rate);
+             static_cast<unsigned>(hdr.num_channels), static_cast<unsigned>(hdr.bits_per_sample),
+             static_cast<unsigned>(hdr.sample_rate));
   return hdr;
 }
 
@@ -340,7 +342,8 @@ bool WaveshareAudio::play_file_blocking_(const std::string &path) {
   }
 
   ESP_LOGI(TAG, "Playing %s (%ld B, %u ch, %u Hz)", path.c_str(),
-           file_size, hdr.num_channels, hdr.sample_rate);
+           file_size, static_cast<unsigned>(hdr.num_channels),
+           static_cast<unsigned>(hdr.sample_rate));
 
   if (!this->reconfigure_clock_if_needed_(hdr.sample_rate) ||
       !this->reconfigure_slot_if_needed_(hdr.num_channels) ||

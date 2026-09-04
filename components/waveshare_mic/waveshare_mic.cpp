@@ -26,7 +26,7 @@ void WaveshareMic::setup() {
   }
 
   ESP_LOGI(TAG, "Microphone ready (rate=%u Hz, path=%s)",
-           this->sample_rate_, this->default_path_.c_str());
+           static_cast<unsigned>(this->sample_rate_), this->default_path_.c_str());
 }
 
 void WaveshareMic::loop() {
@@ -62,8 +62,9 @@ void WaveshareMic::loop() {
     if (now - this->last_stats_log_ms_ > 5000) {
       this->last_stats_log_ms_ = now;
       ESP_LOGI(TAG, "Recording %s: %u ms, %u bytes",
-               this->current_path_.c_str(), now - this->start_ms_,
-               this->bytes_written_);
+               this->current_path_.c_str(),
+               static_cast<unsigned>(now - this->start_ms_),
+               static_cast<unsigned>(this->bytes_written_));
     }
   }
 
@@ -194,7 +195,8 @@ bool WaveshareMic::start_recording(const std::string &path) {
   this->last_stats_log_ms_ = this->start_ms_;
   this->recording_         = true;
 
-  ESP_LOGI(TAG, "Recording -> %s (rate=%u Hz)", this->current_path_.c_str(), this->sample_rate_);
+  ESP_LOGI(TAG, "Recording -> %s (rate=%u Hz)", this->current_path_.c_str(),
+           static_cast<unsigned>(this->sample_rate_));
   return true;
 }
 
@@ -206,9 +208,12 @@ void WaveshareMic::stop_recording() {
   this->close_file_();
 
   if (this->bytes_written_ == 0)
-    ESP_LOGW(TAG, "Stopped (%u ms) — 0 bytes captured", this->last_recording_ms_);
+    ESP_LOGW(TAG, "Stopped (%u ms) — 0 bytes captured",
+             static_cast<unsigned>(this->last_recording_ms_));
   else
-    ESP_LOGI(TAG, "Stopped (%u ms, %u bytes)", this->last_recording_ms_, this->bytes_written_);
+    ESP_LOGI(TAG, "Stopped (%u ms, %u bytes)",
+             static_cast<unsigned>(this->last_recording_ms_),
+             static_cast<unsigned>(this->bytes_written_));
 }
 
 uint32_t WaveshareMic::recording_ms() const {
